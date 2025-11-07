@@ -9,6 +9,8 @@
 
 The Model Context Protocol (MCP) is built on JSON-RPC 2.0 with specific message formats, capability negotiation, and lifecycle management. This document specifies the complete protocol details for implementing an MCP client.
 
+**Example convention:** All JSON snippets use string keys exactly as they appear on the wire. Elixir code must convert atom keys back to string keys before encoding.
+
 ---
 
 ## JSON-RPC 2.0 Foundation
@@ -116,7 +118,7 @@ MCP uses JSON-RPC 2.0 error codes plus custom codes:
 ### Client Error Mapping
 
 ```elixir
-defmodule MCPClient.Error do
+defmodule McpClient.Error do
   def jsonrpc_code_to_type(code) do
     case code do
       -32700 -> :parse_error
@@ -133,6 +135,16 @@ defmodule MCPClient.Error do
       -32007 -> :capability_not_supported
       _ -> :unknown_error
     end
+  end
+
+  def normalize_jsonrpc_error(%{"code" => code, "message" => message} = error) do
+    %__MODULE__{
+      type: jsonrpc_code_to_type(code),
+      message: message,
+      server_error: error,
+      details: Map.get(error, "data", %{}),
+      code: code
+    }
   end
 end
 ```
@@ -212,6 +224,8 @@ Transport-specific connection (stdio process, SSE stream, HTTP handshake).
 - `serverInfo`: Server identification
   - `name`: Server name
   - `version`: Server version
+
+**Version policy:** MVP accepts only `"2024-11-05"`. Any other version transitions to `:backoff` with a protocol error; there is no YYYY-MM compatibility window.
 
 ### 3. Initialized Notification
 
@@ -317,6 +331,7 @@ During `initialize`:
 1. Client declares what it supports
 2. Server declares what it supports
 3. Both parties MUST only use mutually declared features
+4. Client feature modules perform capability checks before issuing requests and return `{:error, %Error{type: :capability_not_supported}}` immediately if the server lacks the feature
 
 **Example:**
 - Client declares `roots.listChanged = true`
@@ -342,7 +357,7 @@ end
 
 # Usage:
 if server_supports?(server_caps, [:resources, :subscribe]) do
-  MCPClient.Resources.subscribe(conn, uri)
+  McpClient.Resources.subscribe(conn, uri)
 else
   {:error, :subscription_not_supported}
 end
@@ -1142,7 +1157,7 @@ end
 
 ```elixir
 def call_with_capability_check(conn, method, params, required_capability) do
-  caps = MCPClient.server_capabilities(conn)
+  caps = McpClient.server_capabilities(conn)
 
   if supports_capability?(caps, required_capability) do
     Connection.call(conn, method, params)

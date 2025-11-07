@@ -1,6 +1,6 @@
 # PROMPT_10: Error and Notification Infrastructure
 
-**Goal:** Implement `MCPClient.Error` and `MCPClient.NotificationRouter` modules to support client features.
+**Goal:** Implement `McpClient.Error` and `McpClient.NotificationRouter` modules to support client features.
 
 **Duration:** ~30 minutes
 
@@ -12,7 +12,7 @@
 
 Before implementing high-level MCP feature APIs (Tools, Resources, etc.), we need shared infrastructure for:
 
-1. **Error normalization** - Convert various error types into structured `MCPClient.Error` structs
+1. **Error normalization** - Convert various error types into structured `McpClient.Error` structs
 2. **Notification routing** - Route server-initiated notifications to typed callbacks
 
 These modules provide the foundation for consistent error handling and notification dispatch across all feature modules.
@@ -34,7 +34,7 @@ These modules provide the foundation for consistent error handling and notificat
 
 ## Implementation Requirements
 
-### 1. MCPClient.Error Module
+### 1. McpClient.Error Module
 
 **File:** `lib/mcp_client/error.ex`
 
@@ -43,7 +43,7 @@ These modules provide the foundation for consistent error handling and notificat
 **Implementation:**
 
 ```elixir
-defmodule MCPClient.Error do
+defmodule McpClient.Error do
   @moduledoc """
   Normalized error type for MCP client operations.
 
@@ -86,7 +86,7 @@ defmodule MCPClient.Error do
     | :unknown_error
 
   @doc """
-  Normalize an error into structured MCPClient.Error.
+  Normalize an error into structured McpClient.Error.
 
   ## Examples
 
@@ -243,7 +243,7 @@ defmodule MCPClient.Error do
 end
 ```
 
-### 2. MCPClient.NotificationRouter Module
+### 2. McpClient.NotificationRouter Module
 
 **File:** `lib/mcp_client/notification_router.ex`
 
@@ -252,7 +252,7 @@ end
 **Implementation:**
 
 ```elixir
-defmodule MCPClient.NotificationRouter do
+defmodule McpClient.NotificationRouter do
   @moduledoc """
   Routes server-initiated notifications to typed callbacks.
 
@@ -273,7 +273,7 @@ defmodule MCPClient.NotificationRouter do
         end
       end
 
-      {:ok, conn} = MCPClient.start_link(
+      {:ok, conn} = McpClient.start_link(
         transport: {...},
         notification_handler: notification_handler
       )
@@ -410,10 +410,10 @@ end
 **File:** `test/mcp_client/error_test.exs`
 
 ```elixir
-defmodule MCPClient.ErrorTest do
+defmodule McpClient.ErrorTest do
   use ExUnit.Case, async: true
 
-  alias MCPClient.Error
+  alias McpClient.Error
 
   describe "normalize/2" do
     test "normalizes timeout error" do
@@ -566,10 +566,10 @@ end
 **File:** `test/mcp_client/notification_router_test.exs`
 
 ```elixir
-defmodule MCPClient.NotificationRouterTest do
+defmodule McpClient.NotificationRouterTest do
   use ExUnit.Case, async: true
 
-  alias MCPClient.NotificationRouter
+  alias McpClient.NotificationRouter
 
   describe "route/1" do
     test "routes tools/list_changed notification" do
@@ -702,12 +702,12 @@ After completing this prompt, verify:
 
 ```elixir
 # Error normalization
-alias MCPClient.Error
+alias McpClient.Error
 error = Error.normalize(:timeout, :tools_list)
 # => %Error{type: :timeout, message: "Request timed out", operation: :tools_list}
 
 # Notification routing
-alias MCPClient.NotificationRouter
+alias McpClient.NotificationRouter
 route = NotificationRouter.route(%{"method" => "notifications/resources/updated", "params" => %{"uri" => "file:///foo"}})
 # => {:resources, :updated, %{"uri" => "file:///foo"}}
 ```
@@ -748,9 +748,9 @@ route = NotificationRouter.route(%{"method" => "notifications/resources/updated"
 ## Next Steps
 
 After completing PROMPT_10:
-- **PROMPT_11**: Implement MCPClient.Tools module
-- **PROMPT_12**: Implement MCPClient.Resources module
-- **PROMPT_13**: Implement MCPClient.Prompts module
+- **PROMPT_11**: Implement McpClient.Tools module
+- **PROMPT_12**: Implement McpClient.Resources module
+- **PROMPT_13**: Implement McpClient.Prompts module
 
 ---
 

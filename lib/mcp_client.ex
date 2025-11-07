@@ -1,6 +1,6 @@
-defmodule MCPClient do
+defmodule McpClient do
   @moduledoc """
-  Documentation for `MCPClient`.
+  Documentation for `McpClient`.
   """
 
   @doc """
@@ -8,7 +8,7 @@ defmodule MCPClient do
 
   ## Examples
 
-      iex> MCPClient.hello()
+      iex> McpClient.hello()
       :world
 
   """

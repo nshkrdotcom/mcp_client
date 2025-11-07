@@ -26,9 +26,10 @@ See `docs/adr/` for detailed rationale behind each decision.
 - See: ADR-0001
 
 **Transport (behavior):**
-- Abstracts communication layer (stdio, SSE, HTTP)
-- Provides frame-based delivery semantics
-- Implements active-once flow control
+- Defines callback contract for transports (`McpClient.Transport`)
+- Concrete modules live under `McpClient.Transports.*` (e.g., `.Stdio`, `.Sse`)
+- Supervisor injects `{transport_mod, transport_opts}` and starts the transport child **before** Connection
+- Provides frame-based delivery semantics + active-once flow control
 - See: ADR-0004
 
 **Supervision Tree:**
@@ -38,6 +39,9 @@ ConnectionSupervisor (rest_for_one)
   └─ Connection (worker)
 ```
 - See: ADR-0002
+- Supervisor always starts Transport first, Connection second
+- Connection never spawns its own transport; it receives the PID in `init/1`
+- Failure cascade: if Transport dies, both children restart; if Connection dies, only Connection restarts
 
 ### 1.2 State Machine
 
@@ -54,6 +58,7 @@ ConnectionSupervisor (rest_for_one)
   transport: pid(),
   session_id: non_neg_integer(),
   requests: %{id => request_meta},
+  retries: %{id => retry_meta},
   tombstones: %{id => tombstone_meta},
   server_caps: Types.ServerCapabilities.t() | nil,
   backoff_delay: non_neg_integer(),
@@ -118,9 +123,21 @@ defp jitter(ms, factor) do
   max(0, round(ms * scale))
 end
 
-# Backoff: jitter(delay, 0.2) → ±20%
+# Backoff: jitter(delay, 0.2) → ±20%, then clamp to [backoff_min, backoff_max]
 # Retry: jitter(10, 0.5) → 5-15ms
+# All math uses monotonic millisecond integers; telemetry exports native duration units
 ```
+
+### 2.4 Protocol Compatibility
+
+- MVP accepts **only** protocol version `"2024-11-05"` during `initialize`.
+- Validation lives in `McpClient.Protocol.Initialize.assert_supported_version!/1` and is invoked exactly once (no duplicated policies).
+- Future compatibility windows (e.g., YYYY-MM) require a new ADR; for now any other version transitions to `:backoff` with `{:error, %Error{type: :protocol}}`.
+
+### 2.5 Timer Ownership Invariant
+
+- At any moment there is **at most one** `:state_timeout` armed (init timeout, tombstone sweep, or backoff tick).
+- All per-request timers (timeouts, retries) use `:erlang.send_after/3` and surface through the normal `:info` path so they cannot starve the singular `:state_timeout`.
 
 ---
 
@@ -145,6 +162,7 @@ defp next_id(), do: System.unique_integer([:positive, :monotonic])
   request_id => %{
     from: {pid(), reference()},       # GenServer reply target
     timer_ref: reference(),            # Timeout reference
+    retry_ref: reference() | nil,      # Busy send retry timer (if armed)
     started_at_mono: integer(),        # System.monotonic_time()
     method: String.t(),                # For telemetry
     session_id: non_neg_integer()      # For stale filtering (post-MVP)
@@ -153,34 +171,74 @@ defp next_id(), do: System.unique_integer([:positive, :monotonic])
 ```
 
 **Storage:** Plain map in Connection state (not ETS)
+- Large request payloads keep a reference to the original encoded binary; we never slice/concatenate in-place.
+- If a retry needs a mutated payload, we store `{method, params}` alongside and re-encode to avoid holding partially-copied binaries.
 **See:** ADR-0003
+
+**Retry entries (per busy send):**
+```elixir
+%{
+  request_id => %{
+    frame: binary() | iodata(),
+    from: {pid(), reference()},
+    request: request_meta(),
+    attempts: non_neg_integer(),
+    timer_ref: reference()
+  }
+}
+```
 
 ### 3.3 Request Flow
 
 ```
 1. User calls API (e.g., McpClient.call_tool/4)
 2. Connection generates unique ID
-3. Connection stores request metadata in map
-4. Connection sends JSON-RPC frame via Transport.send_frame/2
-   - On :busy, retry up to 3 times (see ADR-0007)
-   - On fatal error, fail immediately
-5. Connection sets state timeout for request timeout
-6. Response arrives: deliver to caller, clear timeout
-7. OR timeout fires: cancel upstream, tombstone ID, reply error
+3. Connection stores request metadata in map (always captures `from`)
+4. Connection schedules timeout via `:erlang.send_after/3` and stores the timer ref
+5. Connection sends JSON-RPC frame via `Transport.send_frame/2`
+   - On `{:error, :busy}`, retry up to 3 times via retry timers (ADR-0007)
+   - On fatal error, remove metadata, cancel timer, reply error immediately
+6. Response arrives: cancel timer, deliver to caller, clear metadata
+7. Timeout message arrives: cancel upstream, tombstone ID, reply error
 ```
 
 ### 3.4 Timeout Handling
 
-**Per-request timeout (via gen_statem action):**
-```elixir
-actions = [{:state_timeout, timeout_ms, {:request_timeout, id}}]
-```
+**Mechanics:**
+- Each request stores `timer_ref = :erlang.send_after(timeout_ms, self(), {:req_timeout, id})`
+- Timeout arrives as `:info, {:req_timeout, id}` (tests can `send/2` the same tuple)
+- Cancelling uses `:erlang.cancel_timer(timer_ref, async: true)`; ignore `:ok | false` result
 
 **On timeout:**
-1. Remove request from map
-2. Send `$/cancelRequest` to server (best-effort)
+1. Remove request from map (ignore if already handled/tombstoned)
+2. Fire `send_client_cancel(id)` once (no retry, doesn't raise)
 3. Insert tombstone with TTL
-4. Reply `{:error, %Error{kind: :timeout}}`
+4. Reply `{:error, %Error{type: :timeout}}`
+
+**Cancel helper (MVP):**
+```elixir
+defp send_client_cancel(%{transport: transport}, id) do
+  frame = Jason.encode!(%{"jsonrpc" => "2.0", "method" => "$/cancelRequest", "params" => %{"requestId" => id}})
+  # Fire-and-forget; do not retry or crash on failure
+  :ok = Transport.send_frame(transport, frame) || :ok
+end
+```
+
+`Transport.send_frame/2` is used for notifications as well—JSON-RPC treats them as regular frames with no `id`.
+
+### 3.5 Synchronous Call Semantics
+
+- `gen_statem.call/3` requests in `:ready` stay **pending** until completion or timeout; never reply `{:ok, id}` immediately.
+- The `from` reference is stored in the request entry and is satisfied exactly once via `GenServer.reply/2`.
+- Async APIs (returning request IDs up front) are out-of-scope for MVP; future work will add explicit `request_async/4`.
+- Every path that removes a request (`response`, `timeout`, `transport_down`, `shutdown`) must cancel timers and reply exactly once.
+
+### 3.6 Reset Semantics
+
+- MVP does **not** implement custom `"$/reset"` or `"notifications/reset"` handling.
+- Re-initialization occurs only after transport failure, oversized frames, or explicit Connection shutdown.
+- If a server sends a second `"initialize"` request, we treat it as a protocol violation and log at `:warning`, then transition to `:backoff`.
+- Future negotiated reset behavior will require a capability flag and an ADR.
 
 ---
 
@@ -203,9 +261,14 @@ actions = [{:state_timeout, timeout_ms, {:request_timeout, id}}]
 ```
 
 **Properties:**
-- Mailbox bounded to ~1 frame at a time
-- No hidden buffering in transport
+- Mailbox bounded to ~1 frame at a time (header parsing might enqueue a few short messages, but body bytes are left unread until activation, so the OS pipe applies backpressure before growth becomes unbounded)
+- No hidden buffering in transport (the transport stops reading body chunks until Connection re-arms)
 - Explicit flow control
+- Connection uses `set_active_once_safe/1` helper that no-ops once transport is closed/backing off
+- Transport implementations must stop reading from the external IO source until `set_active(:once)` is invoked; buffering more than 1 framed message violates MVP contract.
+- Stdio transport keeps only header bytes while paused and reads the declared body **after** Connection re-activates it.
+- Declared sizes above `max_frame_bytes` are rejected immediately and the transport closes before reading the body, so no large binary is ever allocated.
+- Call `set_active_once_safe/1` only from states that expect more frames (`:initializing`, `:ready`); in `:backoff`/`:closing` it becomes a no-op to avoid late activation after shutdown.
 **See:** ADR-0004
 
 ### 4.2 JSON Decode Strategy
@@ -234,6 +297,20 @@ actions = [{:state_timeout, timeout_ms, {:request_timeout, id}}]
 
 **See:** ADR-0008
 
+### 4.4 Large Payload Handling
+
+- Request entries keep either the original encoded binary or `{method, params}` tuple; we never slice derivatives of large binaries.
+- Retries reuse the same reference when possible; if a frame must be rebuilt we re-encode from method/params to avoid copying 16MB binaries.
+- Any code that inspects payloads **must** work on decoded structures, not binary slices, to preserve BEAM's reference-counted off-heap sharing.
+
+### 4.5 Stdio Transport Requirements
+
+- Framing uses `Content-Length: <bytes>\r\n\r\n<body>` exactly as in LSP/JSON-RPC; NDJSON is **not** supported.
+- Reader loop: accumulate header lines until `\r\n\r\n`, parse integer, reject if `> max_frame_bytes` before allocating, then read body bytes.
+- Port options: `Port.open({:spawn_executable, cmd}, [:binary, :exit_status, {:args, args}, {:env, env}, {:cd, cd}])`. We keep `:packet` disabled to preserve raw framing.
+- Always drain/forward stderr using `:stderr_to_stdout` or via a dedicated Logger process so the server does not block.
+- Writers emit the same `Content-Length` headers, followed by CRLF CRLF and the UTF-8 encoded JSON payload.
+
 ---
 
 ## 5. Error Handling
@@ -242,20 +319,21 @@ actions = [{:state_timeout, timeout_ms, {:request_timeout, id}}]
 
 ```elixir
 defmodule McpClient.Error do
-  defexception [:kind, :code, :message, :data]
+  defexception [:type, :message, :details, :server_error, :code]
 
   @type t :: %__MODULE__{
-    kind: :transport | :protocol | :jsonrpc | :state | :timeout | :shutdown,
-    code: integer() | nil,
+    type: :transport | :protocol | :jsonrpc | :state | :timeout | :shutdown,
     message: String.t(),
-    data: term()
+    details: map(),
+    server_error: map() | nil,
+    code: integer() | nil
   }
 end
 ```
 
-### 5.2 Error Kinds
+### 5.2 Error Types
 
-| Kind | Meaning | Example |
+| Type | Meaning | Example |
 |------|---------|---------|
 | `:transport` | Transport-level failure | Connection closed, send busy |
 | `:protocol` | Protocol violation | Invalid JSON, oversized frame |
@@ -266,7 +344,7 @@ end
 
 ### 5.3 Retry & Recovery Matrix
 
-| Error Kind | Connection Action | User Effect |
+| Error Type | Connection Action | User Effect |
 |------------|-------------------|-------------|
 | `:transport` (port closed) | → `:backoff`, reconnect | In-flight: `{:error, :transport_down}` |
 | `:protocol` (invalid JSON) | Log, drop frame, continue | None (unless tied to request) |
@@ -274,6 +352,12 @@ end
 | `:state` (unknown response) | Drop if tombstoned, warn otherwise | None |
 | `:timeout` (init timeout) | → `:backoff` with exponential retry | API calls return `{:error, :unavailable}` |
 | `:busy` (transport) | Retry 3x with jitter else fail | Caller gets `{:error, :backpressure}` |
+
+### 5.4 Unknown Response IDs
+
+- Responses that do not match `requests` or `tombstones` log at `:debug` with `type: :unknown_response`.
+- Increment `unknown_response_count` telemetry counter for future observability (exported via `measurements: %{count: 1}`).
+- No user-visible error is emitted; we rely on tombstones + counter to detect gaps.
 
 ---
 
@@ -323,7 +407,7 @@ McpClient.on_notification(client, fn notification ->
 end)
 ```
 
-**Storage:** List of 1-arity functions in Connection state
+**Storage:** List of 1-arity functions in Connection state (hot code upgrades are not supported in MVP; restart the client after deploying new handler code)
 
 ### 7.2 Dispatch (MVP: Synchronous)
 
@@ -350,6 +434,12 @@ end
 
 **See:** ADR-0006
 
+### 7.3 Progress & Cancellation
+
+- `on_progress/2` uses the same synchronous dispatch path; progress payloads are expected to be small status updates.
+- Timeouts and manual cancellations send exactly one `$/cancelRequest` via `send_client_cancel/2`; the notification is best-effort and never retried.
+- Server-driven `"$/progress"` updates may arrive after cancellation; we drop them if the ID is tombstoned.
+
 ---
 
 ## 8. Transport Busy Handling
@@ -364,8 +454,8 @@ end
 case Transport.send_frame(transport, frame) do
   :ok -> # Success path
   {:error, :busy} ->
-    # Schedule retry via state timeout
-    {:keep_state, data, [{:state_timeout, jitter(10, 0.5), :retry_send}]}
+    retry_ref = :erlang.send_after(jitter(10, 0.5), self(), {:retry_send, id, frame})
+    put_in(data.requests[id].retry_ref, retry_ref)
   {:error, reason} -> # Fatal error
 end
 ```
@@ -373,10 +463,15 @@ end
 **After 3 attempts:**
 ```elixir
 {:error, %Error{
-  kind: :transport,
-  message: "transport busy after 3 attempts"
+  type: :transport,
+  message: "transport busy after 3 attempts",
+  details: %{attempts: 3}
 }}
 ```
+
+- Retry timers deliver as `:info, {:retry_send, id, frame}`; handlers must check `requests[id]` before resending.
+- Cancel outstanding `retry_ref` with `:erlang.cancel_timer/1` once the send succeeds or the request terminates.
+- `:state_timeout` is reserved for single outstanding timers (init, drain); per-request retries never use it.
 
 **See:** ADR-0007
 
@@ -390,13 +485,16 @@ end
 
 1. Reply to stop caller: `{:ok, :ok}`
 2. Iterate all in-flight requests
-3. Reply to each: `{:error, %Error{kind: :shutdown}}`
+3. Reply to each: `{:error, %Error{type: :shutdown}}`
 4. Tombstone all IDs
-5. Close transport
+5. Ask transport to terminate gracefully (`Transport.close/1` → Port.close/SIGTERM + wait for `{:exit_status, code}`)
 6. Transition to `:closing`
-7. Exit normally after 100ms
+7. Exit normally after 100ms (or sooner if transport confirms shutdown)
 
 **Timing:** ~100ms total regardless of server state
+
+- Stdio transport forwards stderr either via `:stderr_to_stdout` or a dedicated Logger task; never leave the pipe unread.
+- On shutdown we always drain pending stderr bytes before closing the port to avoid blocked subprocesses.
 
 **See:** ADR-0009
 
@@ -414,6 +512,8 @@ end
 ## 10. Telemetry
 
 ### 10.1 Events (Stable Schema)
+
+**Units:** All duration measurements are reported in native units (`System.monotonic_time/0`). Configuration/backoff math stays in milliseconds but never leaves the Connection process.
 
 **Request lifecycle:**
 ```elixir
@@ -449,6 +549,24 @@ end
 [:mcp_client, :protocol, :violation]
   meta: %{reason: atom(), ...}
   measurements: %{frame_size: integer() | ...}
+
+[:mcp_client, :response, :unknown]
+  meta: %{client: pid()}
+  measurements: %{count: 1}
+
+```
+
+Example handler:
+
+```elixir
+:telemetry.attach(
+  "log-unknown-responses",
+  [:mcp_client, :response, :unknown],
+  fn _event, %{count: count}, %{client: pid}, _ ->
+    Logger.debug("Unknown response id", client: pid, count: count)
+  end,
+  nil
+)
 ```
 
 ### 10.2 Sampling (Future)
@@ -505,11 +623,29 @@ end
 @cancellation_attempts 10
 ```
 
+**Timer testing guideline:** Tests trigger timeout paths either by shortening durations via config or by `send(conn, {:req_timeout, id})`/`{:retry_send, id, frame}`. Never fabricate `{:state_timeout, ...}` messages.
+- Example (manual trigger):
+  ```elixir
+  send(conn, {:req_timeout, id})
+  assert_receive {:error, %Error{type: :timeout}}
+  ```
+- Example (real timer with short duration):
+  ```elixir
+  conn = start_conn(request_timeout: 5)
+  {:ok, _} = McpClient.Tools.call(conn, "slow", %{}, timeout: 5)
+  # timer fires naturally without slowing tests
+  ```
+- Example (retry tick):
+  ```elixir
+  send(conn, {:retry_send, id, frame})
+  assert_receive {:mcp_retry_attempted, ^id} # via your test transport/mocks
+  ```
+
 ### 11.2 Unit Tests (Required)
 
 - ✅ All public API functions
 - ✅ State machine transitions (all edges)
-- ✅ Error handling (all error kinds)
+- ✅ Error handling (all error types)
 - ✅ Timeout behavior
 - ✅ Retry logic (busy transport)
 - ✅ Frame size limit enforcement
@@ -526,93 +662,77 @@ end
 - ✅ Tool invocation end-to-end
 - ✅ Resource read with subscriptions
 - ✅ Connection failure and recovery
+- ✅ Shell-based fixtures (e.g., `cat`, `printf`) run only when `System.find_executable/1` finds them; otherwise tests skip with helpful message
 
 ---
 
 ## 12. API Surface (Public)
 
-### 12.1 Core Functions
+### 12.1 Connection Lifecycle (McpClient)
 
 ```elixir
-# Lifecycle
 start_link(opts) :: GenServer.on_start()
 stop(client()) :: :ok
 await_initialized(client(), timeout()) :: :ok | {:error, term()}
-
-# Resources
-list_resources(client(), opts) :: {:ok, [Resource.t()]} | {:error, term()}
-read_resource(client(), uri(), opts) :: {:ok, map()} | {:error, term()}
-subscribe_resource(client(), uri()) :: :ok | {:error, term()}
-unsubscribe_resource(client(), uri()) :: :ok | {:error, term()}
-list_resource_templates(client()) :: {:ok, list()} | {:error, term()}
-
-# Prompts
-list_prompts(client()) :: {:ok, list()} | {:error, term()}
-get_prompt(client(), name(), args()) :: {:ok, map()} | {:error, term()}
-
-# Tools
-list_tools(client()) :: {:ok, [Tool.t()]} | {:error, term()}
-call_tool(client(), name(), args(), opts) :: {:ok, map()} | {:error, term()}
-
-# Sampling
-create_message(client(), params()) :: {:ok, map()} | {:error, term()}
-
-# Roots
-list_roots(client()) :: {:ok, list()} | {:error, term()}
-
-# Logging
-set_log_level(client(), level()) :: :ok | {:error, term()}
-
-# Health
-ping(client()) :: :ok | {:error, term()}
-
-# Notifications
-on_notification(client(), (Notification.t() -> any())) :: :ok
-on_progress(client(), (map() -> any())) :: :ok
-
-# Introspection
-state(client()) :: atom()
-server_capabilities(client()) :: {:ok, Capabilities.t()} | {:error, term()}
-server_info(client()) :: {:ok, Implementation.t()} | {:error, term()}
+state(client()) :: :starting | :initializing | :ready | :backoff | :closing
+server_capabilities(client()) :: {:ok, Capabilities.t()} | {:error, McpClient.Error.t()}
+server_info(client()) :: {:ok, Implementation.t()} | {:error, McpClient.Error.t()}
+on_notification(client(), handler :: (map() -> any())) :: :ok
+on_progress(client(), handler :: (map() -> any())) :: :ok
 ```
 
-### 12.2 Options
+`McpClient` owns lifecycle + notification registration only. All feature APIs live under dedicated modules below.
 
-**start_link/1 options:**
+### 12.2 Feature Modules (Required)
+
+| Module | Functions | Capability guard |
+|--------|-----------|------------------|
+| `McpClient.Tools` | `list/2`, `call/4` | `server_caps.tools? == true` |
+| `McpClient.Resources` | `list/2`, `read/3`, `subscribe/2`, `unsubscribe/2`, `list_templates/1` | `server_caps.resources? == true` |
+| `McpClient.Prompts` | `list/1`, `get/3` | `server_caps.prompts? == true` |
+| `McpClient.Sampling` | `create_message/2` | `server_caps.sampling? == true` |
+| `McpClient.Roots` | `list/1` | `server_caps.roots? == true` |
+| `McpClient.Logging` | `set_level/2` | `server_caps.logging? == true` |
+
+- Each feature call **first** inspects cached server capabilities and returns `{:error, %Error{type: :capability_not_supported, details: %{required: capability}}}` if absent.
+- Feature modules expose typed structs (via `TypedStruct`, dev-only dependency) for responses/results; this dependency is declared as `runtime: false` in `mix.exs`.
+- No top-level convenience wrappers (`McpClient.list_tools/2`) ship in MVP; we will add them only if real users request it.
+
+### 12.3 start_link/1 Options
+
 ```elixir
 [
   # Required
-  transport: :stdio | :sse | :http_sse,
-
-  # Transport-specific (stdio)
-  command: String.t(),
-  args: [String.t()],
-  env: %{String.t() => String.t()},
-
-  # Transport-specific (SSE)
-  url: String.t(),
-  headers: [{String.t(), String.t()}],
-
-  # Transport-specific (HTTP)
-  base_url: String.t(),
-  sse_endpoint: String.t(),
-  message_endpoint: String.t(),
+  transport: {module(), keyword()},   # e.g., {McpClient.Transports.Stdio, cmd: "repo/mcp-server"},
 
   # Common
   name: atom() | {:via, module(), term()},
   client_info: %{name: String.t(), version: String.t()},
-  capabilities: Capabilities.t(),
-  timeout: timeout(),
-  initialize_timeout: timeout()
+  capabilities: map(),                # Advertised client capabilities
+  request_timeout: timeout(),
+  init_timeout: timeout(),
+  backoff_min: non_neg_integer(),
+  backoff_max: non_neg_integer(),
+
+  # Stdio transport opts (subset)
+  cmd: String.t(),
+  args: [String.t()],
+  env: %{String.t() => String.t()},
+  cd: String.t() | nil,
+  stderr: :merge | :log,              # :merge => :stderr_to_stdout, :log => spawn logger task
+
+  # SSE/HTTP transports add url/header-specific keys
 ]
 ```
 
 **call_*/N options:**
 ```elixir
-[
-  timeout: timeout()  # Override default per-call
-]
+[timeout: timeout()]  # Override default per-call
 ```
+
+### 12.4 JSON Example Convention
+
+All request/response examples in this doc use **string keys** (matching JSON) even when written as Elixir maps. Encoding/decoding helpers convert to atoms only after validation; never assume snake_case atoms map 1:1 to JSON keys.
 
 ---
 

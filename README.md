@@ -42,8 +42,8 @@ mix deps.get
 ## 🚀 Quick Start
 
 1. Configure your MCP server credentials in `config/runtime.exs`
-2. Start a connection with `MCPClient.start_link/1`
-3. Declare tools with `MCPClient.Tools.declare/1` and register handlers
+2. Start a connection with `McpClient.start_link/1`
+3. Declare tools with `McpClient.Tools.declare/1` and register handlers
 4. Stream responses with built-in supervision, telemetry, and retries
 
 Full guides and API docs will be published on HexDocs as the project matures.

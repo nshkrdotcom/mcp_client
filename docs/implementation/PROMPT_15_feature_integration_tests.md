@@ -21,10 +21,10 @@ Integration tests verify the complete stack (Connection → Features) against re
 **File:** `test/mcp_client/features_integration_test.exs`
 
 ```elixir
-defmodule MCPClient.FeaturesIntegrationTest do
+defmodule McpClient.FeaturesIntegrationTest do
   use ExUnit.Case, async: false  # Real servers, no parallelism
 
-  alias MCPClient.{Tools, Resources, Prompts}
+  alias McpClient.{Tools, Resources, Prompts}
 
   @moduletag :integration
   @moduletag timeout: 60_000
@@ -37,15 +37,15 @@ defmodule MCPClient.FeaturesIntegrationTest do
 
   setup do
     # Start connection to test server
-    {:ok, conn} = MCPClient.start_link(
+    {:ok, conn} = McpClient.start_link(
       transport: {
-        MCPClient.Transports.Stdio,
+        McpClient.Transports.Stdio,
         cmd: @test_server_cmd,
         args: @test_server_args
       }
     )
 
-    on_exit(fn -> MCPClient.stop(conn) end)
+    on_exit(fn -> McpClient.stop(conn) end)
 
     {:ok, conn: conn}
   end
@@ -153,7 +153,7 @@ defmodule MCPClient.FeaturesIntegrationTest do
 
     test "handles invalid method", %{conn: conn} do
       # Direct Connection.call with invalid method
-      assert {:error, error} = MCPClient.Connection.call(
+      assert {:error, error} = McpClient.Connection.call(
         conn,
         "invalid/method",
         %{},

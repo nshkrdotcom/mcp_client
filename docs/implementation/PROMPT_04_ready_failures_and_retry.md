@@ -1,6 +1,8 @@
 # Implementation Prompt 04: Ready State - Failures and Retry Logic
 
-**Goal:** Implement :ready state failure handling, transport busy retry, oversized frames, transport down, and reset notifications.
+**Goal:** Implement :ready state failure handling, transport busy retry, oversized frames, and transport down handling (reset notifications were removed from MVP).
+
+> **Update (2025-11-07):** Use `:erlang.send_after/3` for retry timers (message form `{:retry_send, id, frame}`) and ignore any legacy instructions about `{:info, {:retry_send, ...}}`. Reset notifications are intentionally out-of-scope for MVP; the remaining references in this prompt are historical context only.
 
 **Test Strategy:** TDD with rgr. All tests green, no warnings.
 
@@ -12,7 +14,7 @@ You're implementing the failure paths and retry logic for :ready state:
 1. **Transport busy retry**: When send returns `:busy`, schedule retry with exponential backoff + jitter
 2. **Transport down**: Fail all in-flight and in-retry requests, transition to :backoff
 3. **Oversized frames**: Close transport, transition to :backoff
-4. **Reset notifications**: Re-initialize connection
+4. **Reset notifications**: (Removed for MVP; keep this slot empty until a negotiated capability exists)
 5. **Stop during retry**: Clear retry timers, prevent double replies
 
 This is where **concurrent retry correctness** is critical (per-ID retry tracking).
@@ -28,9 +30,9 @@ From STATE_TRANSITIONS.md, these are the exact transitions to implement:
 | From | Event | Guard | Actions | To |
 |------|-------|-------|---------|-----|
 | :ready | `{:call, from}, {:request, method, params, opts}` | send returns `:busy` | Generate ID; track in `retries` map with attempt count; schedule retry with jitter; reply `{:ok, id}` | :ready |
-| :ready | `{:state_timeout, {:retry_send, id}}` | retry exists, attempts < max | Increment attempts; retry send; if `:ok` → promote to requests with timeout; if `:busy` → reschedule retry; if error → fail request | :ready |
-| :ready | `{:state_timeout, {:retry_send, id}}` | retry exists, attempts ≥ max | Reply backpressure error; tombstone; clear retry | :ready |
-| :ready | `{:state_timeout, {:retry_send, id}}` | retry cleared (stop) | Ignore | :ready |
+| :ready | `{:info, {:retry_send, id}}` | retry exists, attempts < max | Increment attempts; retry send; if `:ok` → promote to requests with timeout; if `:busy` → reschedule retry; if error → fail request | :ready |
+| :ready | `{:info, {:retry_send, id}}` | retry exists, attempts ≥ max | Reply backpressure error; tombstone; clear retry | :ready |
+| :ready | `{:info, {:retry_send, id}}` | retry cleared (stop) | Ignore | :ready |
 
 ### :ready State - Failure Paths
 
@@ -38,7 +40,6 @@ From STATE_TRANSITIONS.md, these are the exact transitions to implement:
 |------|-------|-------|---------|-----|
 | :ready | `{:info, {:transport, :down, reason}}` | - | Tombstone all requests; **fail/clear retries**; do not re-arm set_active; schedule backoff | :backoff |
 | :ready | `{:info, {:transport, :frame, binary}}` | byte_size > max | Log error; close transport (no set_active); **fail/clear retries**; schedule backoff | :backoff |
-| :ready | `{:info, {:transport, :frame, binary}}` | reset notification | Close transport (no set_active); **fail/clear retries**; schedule backoff | :initializing |
 | :ready | `{:call, from}, :stop` | - | Tombstone all requests; **fail/clear retries**; reply `:ok`; close transport; exit(normal) | - |
 
 ### Retry Tracking Structure (from ADR-0007)
@@ -93,7 +94,7 @@ data.retries = %{
 **Backpressure error:**
 ```elixir
 %Error{
-  kind: :transport,
+  type: :transport,
   message: "Transport busy after #{@retry_attempts} attempts",
   details: %{request_id: id}
 }
@@ -201,7 +202,7 @@ def handle_event({:call, from}, {:request, method, params, opts}, :ready, data) 
 
     {:error, reason} ->
       # Send failed permanently
-      error = %{kind: :transport, message: "Send failed: #{inspect(reason)}"}
+      error = %{type: :transport, message: "Send failed: #{inspect(reason)}"}
       {:keep_state_and_data, [{:reply, from, {:error, error}}]}
   end
 end
@@ -227,7 +228,7 @@ defp handle_retry_attempt(id, retry_state, data) do
   if attempts >= @retry_attempts do
     # Exhausted retries - fail with backpressure
     error = %{
-      kind: :transport,
+      type: :transport,
       message: "Transport busy after #{@retry_attempts} attempts",
       details: %{request_id: id}
     }
@@ -262,7 +263,7 @@ defp handle_retry_attempt(id, retry_state, data) do
       {:error, reason} ->
         # Permanent failure
         error = %{
-          kind: :transport,
+          type: :transport,
           message: "Send failed: #{inspect(reason)}",
           details: %{request_id: id, attempt: attempts}
         }
@@ -314,7 +315,7 @@ def handle_event(:info, {:transport, :down, reason}, :ready, data) do
   Logger.error("Transport down in ready: #{inspect(reason)}")
 
   # Fail all in-flight requests
-  error = %{kind: :transport, message: "Transport down: #{inspect(reason)}"}
+  error = %{type: :transport, message: "Transport down: #{inspect(reason)}"}
   for {_id, %{from: from}} <- data.requests do
     GenServer.reply(from, {:error, error})
   end
@@ -330,58 +331,6 @@ def handle_event(:info, {:transport, :down, reason}, :ready, data) do
 end
 ```
 
-### 6. Implement Reset Notification
-
-```elixir
-# Add to process_ready_frame/2:
-defp process_ready_frame(%{"method" => "notifications/cancelled"}, data) do
-  # Handle cancellation notification if needed
-  data
-end
-
-defp process_ready_frame(%{"method" => method}, data) when method in [
-  "$/reset",
-  "notifications/reset"  # Or whatever the spec defines
-] do
-  Logger.warning("Received reset notification - re-initializing")
-
-  # Fail all requests and retries
-  error = %{kind: :reset, message: "Connection reset by server"}
-  for {_id, %{from: from}} <- data.requests do
-    GenServer.reply(from, {:error, error})
-  end
-
-  data = tombstone_all_requests(data)
-  data = fail_and_clear_retries(data, error)
-
-  # Close transport and transition to initializing
-  Transport.close(data.transport)
-  # Return marker to trigger state transition
-  {:reset_transition, data}
-end
-
-# Update handle_event to handle reset:
-def handle_event(:info, {:transport, :frame, binary}, :ready, data) do
-  case Jason.decode(binary) do
-    {:ok, json} ->
-      case process_ready_frame(json, data) do
-        {:reset_transition, new_data} ->
-          # Transition to initializing with backoff
-          {:next_state, :initializing, new_data, schedule_backoff_action(new_data)}
-
-        new_data ->
-          :ok = Transport.set_active(data.transport, :once)
-          {:keep_state, new_data}
-      end
-
-    {:error, reason} ->
-      Logger.warning("Invalid JSON in ready: #{inspect(reason)}")
-      :ok = Transport.set_active(data.transport, :once)
-      {:keep_state_and_data, []}
-  end
-end
-```
-
 ### 7. Update Stop Handling
 
 ```elixir
@@ -389,7 +338,7 @@ def handle_event({:call, from}, :stop, :ready, data) do
   Logger.info("Stopping connection")
 
   # Fail all in-flight requests
-  error = %{kind: :shutdown, message: "Connection stopped"}
+  error = %{type: :shutdown, message: "Connection stopped"}
   for {_id, %{from: req_from}} <- data.requests do
     GenServer.reply(req_from, {:error, error})
   end
@@ -461,7 +410,7 @@ describe ":ready state - retry logic" do
     end)
 
     # Should eventually receive backpressure error
-    assert {:error, %{kind: :transport, message: msg}} = Task.await(task)
+    assert {:error, %{type: :transport, message: msg}} = Task.await(task)
     assert msg =~ "busy after 3 attempts"
   end
 
@@ -531,8 +480,8 @@ describe ":ready state - failure paths" do
     send(conn, {:transport, :down, :normal})
 
     # Both should receive transport error
-    assert {:error, %{kind: :transport}} = Task.await(task1)
-    assert {:error, %{kind: :transport}} = Task.await(task2)
+    assert {:error, %{type: :transport}} = Task.await(task1)
+    assert {:error, %{type: :transport}} = Task.await(task2)
   end
 
   test "oversized frame closes connection", %{connection: conn} do
@@ -545,33 +494,6 @@ describe ":ready state - failure paths" do
     # Verify via state query (needs API)
   end
 
-  test "reset notification re-initializes", %{connection: conn} do
-    # Make a request
-    task = Task.async(fn ->
-      {:ok, _id} = :gen_statem.call(conn, {:request, "test", %{}, []})
-      receive do
-        msg -> msg
-      after
-        1000 -> :timeout
-      end
-    end)
-
-    Process.sleep(10)
-
-    # Send reset notification
-    reset = %{
-      "jsonrpc" => "2.0",
-      "method" => "$/reset",
-      "params" => %{}
-    }
-    send(conn, {:transport, :frame, Jason.encode!(reset)})
-
-    # Request should fail
-    assert {:error, %{kind: :reset}} = Task.await(task)
-
-    # Connection should transition to initializing
-    # (Verify via state query)
-  end
 end
 
 describe "stop during retry" do
@@ -599,7 +521,7 @@ describe "stop during retry" do
     assert :ok = :gen_statem.call(conn, :stop)
 
     # Task should receive shutdown error (not backpressure)
-    assert {:error, %{kind: :shutdown}} = Task.await(task)
+    assert {:error, %{type: :shutdown}} = Task.await(task)
 
     # No second message
     refute_receive _, 100
@@ -613,7 +535,7 @@ describe "stop during retry" do
     :gen_statem.call(conn, :stop)
 
     # Manually trigger retry timer (shouldn't happen but test robustness)
-    send(conn, {:state_timeout, {:retry_send, 1}})
+    send(conn, {:info, {:retry_send, 1}})
 
     # Should not crash
     refute Process.alive?(conn)  # Already stopped

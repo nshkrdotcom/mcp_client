@@ -308,7 +308,7 @@ Error struct:
 
 ```elixir
 %McpClient.Error{
-  kind: :transport | :timeout | :unavailable | :shutdown | :server | :protocol,
+  type: :transport | :timeout | :unavailable | :shutdown | :server | :protocol,
   message: String.t(),
   details: map()
 }
@@ -331,11 +331,11 @@ case McpClient.call_tool(client, "tool", %{}) do
     # Process result
     IO.inspect(result)
 
-  {:error, %McpClient.Error{kind: :timeout}} ->
+  {:error, %McpClient.Error{type: :timeout}} ->
     # Handle timeout
     Logger.warn("Tool call timed out")
 
-  {:error, %McpClient.Error{kind: :server, message: msg}} ->
+  {:error, %McpClient.Error{type: :server, message: msg}} ->
     # Handle server error
     Logger.error("Server error: #{msg}")
 
@@ -425,7 +425,7 @@ defmodule Helpers do
       {:ok, result} ->
         {:ok, result}
 
-      {:error, %McpClient.Error{kind: :timeout}} when attempts > 1 ->
+      {:error, %McpClient.Error{type: :timeout}} when attempts > 1 ->
         Process.sleep(1000)
         retry_request(fun, attempts - 1)
 

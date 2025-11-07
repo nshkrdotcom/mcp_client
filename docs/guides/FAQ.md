@@ -76,7 +76,7 @@ For now, you can manually wrap Connection.call/4:
 ```elixir
 defmodule MCPServers.GoogleDrive do
   def get_document(conn, id) do
-    MCPClient.Connection.call(conn, "google_drive__get_document", %{documentId: id})
+    McpClient.Connection.call(conn, "google_drive__get_document", %{documentId: id})
   end
 end
 ```
@@ -101,8 +101,8 @@ The MCP server sees the exact same Connection.call/4 requests either way.
 
 ```elixir
 # Direct pattern for simple servers
-{:ok, tools} = MCPClient.Tools.list(simple_conn)
-{:ok, result} = MCPClient.Tools.call(simple_conn, "weather", %{city: "NYC"})
+{:ok, tools} = McpClient.Tools.list(simple_conn)
+{:ok, result} = McpClient.Tools.call(simple_conn, "weather", %{city: "NYC"})
 
 # Code Execution pattern for complex servers
 alias MCPServers.Salesforce
@@ -188,8 +188,8 @@ npx -y @modelcontextprotocol/server-memory
 No. MCP Client is a *client* library - it needs to connect to an MCP *server*. However, you can use the memory server for testing:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "uvx", args: ["mcp-server-memory"]}
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "uvx", args: ["mcp-server-memory"]}
 )
 ```
 
@@ -202,7 +202,7 @@ No. MCP Client is a *client* library - it needs to connect to an MCP *server*. H
 At connection level (global):
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   request_timeout: 60_000  # 60 seconds
 )
@@ -211,7 +211,7 @@ At connection level (global):
 Per-request (override):
 
 ```elixir
-MCPClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
+McpClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
 ```
 
 See [Configuration Guide](CONFIGURATION.md) for all options.
@@ -221,7 +221,7 @@ See [Configuration Guide](CONFIGURATION.md) for all options.
 Use backoff options:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   backoff_min: 1_000,    # Start at 1 second
   backoff_max: 30_000,   # Max 30 seconds
@@ -236,9 +236,9 @@ Backoff doubles on each failure: 1s → 2s → 4s → 8s → 16s → 30s (max)
 Yes, recommended pattern:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.Stdio,
+    McpClient.Transports.Stdio,
     cmd: System.get_env("MCP_CMD", "mcp-server"),
     args: String.split(System.get_env("MCP_ARGS", ""), " ")
   }
@@ -254,7 +254,7 @@ See [Configuration Guide](CONFIGURATION.md) for complete example.
 ### How do I list available tools?
 
 ```elixir
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 
 Enum.each(tools, fn tool ->
   IO.puts("#{tool.name}: #{tool.description}")
@@ -264,7 +264,7 @@ end)
 ### How do I call a tool?
 
 ```elixir
-{:ok, result} = MCPClient.Tools.call(conn, "tool_name", %{
+{:ok, result} = McpClient.Tools.call(conn, "tool_name", %{
   arg1: "value1",
   arg2: "value2"
 })
@@ -280,7 +280,7 @@ end
 ### How do I read a resource?
 
 ```elixir
-{:ok, contents} = MCPClient.Resources.read(conn, "file:///path/to/file.txt")
+{:ok, contents} = McpClient.Resources.read(conn, "file:///path/to/file.txt")
 
 # Contents is a list of content items
 Enum.each(contents.contents, fn content ->
@@ -299,17 +299,17 @@ end)
 
 ```elixir
 # Subscribe to resource
-:ok = MCPClient.Resources.subscribe(conn, "file:///watched/file.txt")
+:ok = McpClient.Resources.subscribe(conn, "file:///watched/file.txt")
 
 # Set up notification handler when starting connection
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: fn notification ->
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:resources, :updated, %{"uri" => uri}} ->
         IO.puts("Resource updated: #{uri}")
         # Re-read resource
-        {:ok, contents} = MCPClient.Resources.read(conn, uri)
+        {:ok, contents} = McpClient.Resources.read(conn, uri)
         process_update(contents)
 
       _ -> :ok
@@ -324,10 +324,10 @@ end)
 
 ```elixir
 # List available prompts
-{:ok, prompts} = MCPClient.Prompts.list(conn)
+{:ok, prompts} = McpClient.Prompts.list(conn)
 
 # Get a prompt with arguments
-{:ok, result} = MCPClient.Prompts.get(conn, "summarize", %{
+{:ok, result} = McpClient.Prompts.get(conn, "summarize", %{
   text: "Long text to summarize...",
   max_length: 200
 })
@@ -341,20 +341,20 @@ messages = result.messages
 
 ## Error Handling
 
-### What does {:error, %MCPClient.Error{type: :timeout}} mean?
+### What does {:error, %McpClient.Error{type: :timeout}} mean?
 
 The request exceeded the timeout limit. Solutions:
 
 1. **Increase timeout:**
    ```elixir
-   MCPClient.Tools.call(conn, tool, args, timeout: 60_000)
+   McpClient.Tools.call(conn, tool, args, timeout: 60_000)
    ```
 
 2. **Check server performance:** The server may be slow or overloaded.
 
 3. **Verify network:** If using HTTP transport, check network latency.
 
-### What does {:error, %MCPClient.Error{type: :connection_closed}} mean?
+### What does {:error, %McpClient.Error{type: :connection_closed}} mean?
 
 The connection to the server was lost. This can happen when:
 - Server process crashed
@@ -366,7 +366,7 @@ The connection to the server was lost. This can happen when:
 - Retry the operation after a brief delay
 - Check server logs for crash reasons
 
-### What does {:error, %MCPClient.Error{type: :method_not_found}} mean?
+### What does {:error, %McpClient.Error{type: :method_not_found}} mean?
 
 The server doesn't recognize the method. Causes:
 - Server doesn't implement the feature (check capabilities)
@@ -376,11 +376,11 @@ The server doesn't recognize the method. Causes:
 **Solutions:**
 ```elixir
 # Check server capabilities
-caps = MCPClient.server_capabilities(conn)
+caps = McpClient.server_capabilities(conn)
 IO.inspect(caps)
 
 # Check available tools
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 tool_names = Enum.map(tools, & &1.name)
 IO.inspect(tool_names)
 ```
@@ -388,7 +388,7 @@ IO.inspect(tool_names)
 ### How do I check what capabilities a server supports?
 
 ```elixir
-caps = MCPClient.server_capabilities(conn)
+caps = McpClient.server_capabilities(conn)
 
 # Check specific capability
 has_subscribe? = get_in(caps, ["resources", "subscribe"]) != nil
@@ -431,9 +431,9 @@ See [Error Handling Guide](ERROR_HANDLING.md) for patterns.
 ### How do I use the stdio transport?
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.Stdio,
+    McpClient.Transports.Stdio,
     cmd: "python",           # or "node", "uvx", "/path/to/binary"
     args: ["server.py"],
     env: [{"DEBUG", "1"}],
@@ -445,9 +445,9 @@ See [Error Handling Guide](ERROR_HANDLING.md) for patterns.
 ### How do I use the HTTP transport with OAuth?
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.HTTP,
+    McpClient.Transports.HTTP,
     base_url: "https://mcp.example.com",
     oauth: %{
       client_id: System.get_env("MCP_CLIENT_ID"),
@@ -467,20 +467,20 @@ Yes! Start multiple connections:
 
 ```elixir
 # Local server
-{:ok, local_conn} = MCPClient.start_link(
+{:ok, local_conn} = McpClient.start_link(
   name: MyApp.LocalMCP,
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-local"}
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-local"}
 )
 
 # Cloud server
-{:ok, cloud_conn} = MCPClient.start_link(
+{:ok, cloud_conn} = McpClient.start_link(
   name: MyApp.CloudMCP,
-  transport: {MCPClient.Transports.HTTP, base_url: "https://..."}
+  transport: {McpClient.Transports.HTTP, base_url: "https://..."}
 )
 
 # Use different connections
-MCPClient.Tools.list(MyApp.LocalMCP)
-MCPClient.Tools.list(MyApp.CloudMCP)
+McpClient.Tools.list(MyApp.LocalMCP)
+McpClient.Tools.list(MyApp.CloudMCP)
 ```
 
 ---
@@ -496,7 +496,7 @@ As many as you want - requests are multiplexed over a single connection. However
 ```elixir
 tasks = Enum.map(tools, fn tool ->
   Task.async(fn ->
-    MCPClient.Tools.call(conn, tool, %{})
+    McpClient.Tools.call(conn, tool, %{})
   end)
 end)
 
@@ -554,10 +554,10 @@ IO.inspect(state, label: "Connection State")
 Log requests and responses:
 
 ```elixir
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 IO.inspect(tools, label: "Available Tools", pretty: true)
 
-result = MCPClient.Tools.call(conn, "tool_name", %{arg: "value"})
+result = McpClient.Tools.call(conn, "tool_name", %{arg: "value"})
 IO.inspect(result, label: "Tool Result", pretty: true)
 ```
 
@@ -606,7 +606,7 @@ defmodule MyApp.Application do
 
   def start(_type, _args) do
     children = [
-      {MCPClient, mcp_config()}
+      {McpClient, mcp_config()}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
@@ -635,7 +635,7 @@ defmodule MyApp.HealthCheck do
   end
 
   def handle_info(:check, conn) do
-    case MCPClient.Connection.call(conn, "ping", %{}, 5_000) do
+    case McpClient.Connection.call(conn, "ping", %{}, 5_000) do
       {:ok, _} ->
         Logger.debug("MCP connection healthy")
 
@@ -727,7 +727,7 @@ end
 
 **Check server capabilities:**
 ```elixir
-caps = MCPClient.server_capabilities(conn)
+caps = McpClient.server_capabilities(conn)
 IO.inspect(caps)
 
 # Server needs to advertise features:

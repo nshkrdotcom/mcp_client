@@ -78,17 +78,17 @@ Load tools on-demand instead of all upfront:
 **Option A: Filesystem-style discovery**
 ```elixir
 # List tool categories
-{:ok, categories} = MCPClient.Tools.list_categories(conn)
+{:ok, categories} = McpClient.Tools.list_categories(conn)
 # => ["google_drive", "salesforce", "slack"]
 
 # List tools in category (detail levels: name-only, minimal, full)
-{:ok, tools} = MCPClient.Tools.list(conn, category: "salesforce", detail: :minimal)
+{:ok, tools} = McpClient.Tools.list(conn, category: "salesforce", detail: :minimal)
 ```
 
 **Option B: Search API**
 ```elixir
 # Search for specific tools
-{:ok, tools} = MCPClient.Tools.search(conn, "update customer")
+{:ok, tools} = McpClient.Tools.search(conn, "update customer")
 # => [%Tool{name: "salesforce__update_account", ...}]
 ```
 
@@ -104,7 +104,7 @@ Load tools on-demand instead of all upfront:
 Dispatch notifications to TaskSupervisor instead of blocking:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: &MyApp.NotificationHandler.handle/1,
   notification_mode: :async  # New option
@@ -174,7 +174,7 @@ Multiple connections to same server, round-robin dispatch:
 
 ```elixir
 children = [
-  {MCPClient.Pool, [
+  {McpClient.Pool, [
     name: MyApp.MCPPool,
     size: 5,
     transport: {Stdio, cmd: "mcp-server"}
@@ -182,7 +182,7 @@ children = [
 ]
 
 # Automatically load-balances across pool
-MCPClient.Pool.call(MyApp.MCPPool, "tools/call", params)
+McpClient.Pool.call(MyApp.MCPPool, "tools/call", params)
 ```
 
 **Why Tier 2:** Single connection sufficient for most applications; needed for high-throughput use cases.
@@ -215,16 +215,16 @@ Store pending requests in ETS instead of map in gen_statem state:
 Built-in caching with automatic invalidation:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
-  cache: MCPClient.Cache.ETS  # Or :none (default)
+  cache: McpClient.Cache.ETS  # Or :none (default)
 )
 
 # First call: reads from server
-{:ok, contents} = MCPClient.Resources.read(conn, uri)
+{:ok, contents} = McpClient.Resources.read(conn, uri)
 
 # Second call: returns from cache
-{:ok, contents} = MCPClient.Resources.read(conn, uri)  # Cached
+{:ok, contents} = McpClient.Resources.read(conn, uri)  # Cached
 
 # Automatically invalidated on resources/updated notification
 ```
@@ -242,7 +242,7 @@ Automatically retry in-flight requests after reconnection:
 
 ```elixir
 # Request in-flight when connection drops
-MCPClient.Tools.call(conn, "tool", %{})
+McpClient.Tools.call(conn, "tool", %{})
 
 # Connection reconnects, request automatically retried
 # → Returns {:ok, result} or {:error, reason}
@@ -250,7 +250,7 @@ MCPClient.Tools.call(conn, "tool", %{})
 
 **Configuration:**
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   replay_requests: true  # Default: false (fail fast)
 )
@@ -272,8 +272,8 @@ MCPClient.Tools.call(conn, "tool", %{})
 Two-way communication over WebSocket:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.WebSocket, url: "wss://..."}
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.WebSocket, url: "wss://..."}
 )
 ```
 
@@ -289,7 +289,7 @@ Two-way communication over WebSocket:
 Automatic compression for frames > 10KB:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   compression: :gzip  # or :deflate, :none (default)
 )
@@ -358,7 +358,7 @@ Automatic tokenization of sensitive data:
 Secure environment for agent-written code:
 
 ```elixir
-{:ok, result} = MCPClient.Sandbox.execute(code, conn, timeout: 30_000)
+{:ok, result} = McpClient.Sandbox.execute(code, conn, timeout: 30_000)
 ```
 
 **Features:**

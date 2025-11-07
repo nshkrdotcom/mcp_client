@@ -15,16 +15,16 @@ MCP Client connections are configured via `start_link/1` options. This guide cov
 Minimal configuration requires only a transport:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"}
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"}
 )
 ```
 
 With common options:
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"},
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"},
   name: MyApp.MCPConnection,
   request_timeout: 30_000,
   notification_handler: &MyApp.handle_notification/1
@@ -47,17 +47,17 @@ transport: {module(), Keyword.t()}
 
 ```elixir
 # Stdio (local process)
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "uvx",
             args: ["mcp-server-sqlite", "--db-path", "./data.db"]}
 
 # SSE (server-sent events, receive only)
-transport: {MCPClient.Transports.SSE,
+transport: {McpClient.Transports.SSE,
             url: "https://api.example.com/sse",
             headers: [{"authorization", "Bearer token"}]}
 
 # HTTP+SSE (bidirectional)
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://api.example.com",
             oauth: %{client_id: "...", client_secret: "..."}}
 ```
@@ -84,14 +84,14 @@ Default: None (connection is not registered)
 
 ```elixir
 # Start named connection
-{:ok, _conn} = MCPClient.start_link(
+{:ok, _conn} = McpClient.start_link(
   name: MyApp.MCPConnection,
   transport: {...}
 )
 
 # Access anywhere in application
 conn = Process.whereis(MyApp.MCPConnection)
-MCPClient.Tools.list(conn)
+McpClient.Tools.list(conn)
 ```
 
 ### Timeout Options
@@ -119,13 +119,13 @@ Applies to:
 
 ```elixir
 # Global timeout
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   request_timeout: 60_000  # 60 seconds
 )
 
 # Per-request override
-{:ok, result} = MCPClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
+{:ok, result} = McpClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
 ```
 
 **`init_timeout`** - Time allowed for initialize handshake
@@ -178,7 +178,7 @@ Default: `0.2` (±20% randomization)
 **Example - Aggressive reconnection:**
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   backoff_min: 100,      # Start at 100ms
   backoff_max: 5_000,    # Max 5 seconds
@@ -189,7 +189,7 @@ Default: `0.2` (±20% randomization)
 **Example - Conservative reconnection:**
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   backoff_min: 5_000,    # Start at 5 seconds
   backoff_max: 300_000,  # Max 5 minutes
@@ -268,7 +268,7 @@ defmodule MyApp.NotificationHandler do
   require Logger
 
   def handle(notification) do
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:resources, :updated, %{"uri" => uri}} ->
         Logger.info("Resource updated: #{uri}")
         MyApp.Cache.invalidate(uri)
@@ -294,7 +294,7 @@ defmodule MyApp.NotificationHandler do
 end
 
 # Configure
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: &MyApp.NotificationHandler.handle/1
 )
@@ -326,7 +326,7 @@ Default:
 **Custom capabilities:**
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   client_capabilities: %{
     "roots" => %{"listChanged" => true},
@@ -349,7 +349,7 @@ Default: `[]` (no roots)
 **Example:**
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   roots: [
     %{uri: "file:///home/user/project", name: "Project"},
@@ -371,7 +371,7 @@ Server can query these roots and access files within them.
 **Options:**
 
 ```elixir
-{MCPClient.Transports.Stdio, [
+{McpClient.Transports.Stdio, [
   cmd: String.t(),                           # Required
   args: [String.t()],                        # Default: []
   env: [{String.t(), String.t()}],           # Default: []
@@ -385,31 +385,31 @@ Server can query these roots and access files within them.
 
 ```elixir
 # Python server
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "python",
             args: ["server.py"],
             env: [{"DEBUG", "1"}],
             cd: "/path/to/server"}
 
 # Node.js server
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "node",
             args: ["dist/index.js", "--port", "3000"]}
 
 # uvx (Python tool runner)
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "uvx",
             args: ["mcp-server-sqlite", "--db-path", "./data.db"]}
 
 # Rust binary
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "/usr/local/bin/mcp-server-rust"}
 ```
 
 **Environment variables:**
 
 ```elixir
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "mcp-server",
             env: [
               {"MCP_LOG_LEVEL", "debug"},
@@ -421,7 +421,7 @@ transport: {MCPClient.Transports.Stdio,
 **Working directory:**
 
 ```elixir
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "python",
             args: ["server.py"],
             cd: "/home/user/mcp-servers/my-server"}
@@ -434,7 +434,7 @@ transport: {MCPClient.Transports.Stdio,
 **Options:**
 
 ```elixir
-{MCPClient.Transports.SSE, [
+{McpClient.Transports.SSE, [
   url: String.t(),                           # Required
   headers: [{String.t(), String.t()}],       # Default: []
   max_frame_bytes: pos_integer(),            # Default: 16MB
@@ -446,11 +446,11 @@ transport: {MCPClient.Transports.Stdio,
 
 ```elixir
 # Basic SSE
-transport: {MCPClient.Transports.SSE,
+transport: {McpClient.Transports.SSE,
             url: "https://mcp.example.com/events"}
 
 # With authentication
-transport: {MCPClient.Transports.SSE,
+transport: {McpClient.Transports.SSE,
             url: "https://mcp.example.com/events",
             headers: [
               {"authorization", "Bearer #{token}"},
@@ -458,7 +458,7 @@ transport: {MCPClient.Transports.SSE,
             ]}
 
 # Custom reconnect delay
-transport: {MCPClient.Transports.SSE,
+transport: {McpClient.Transports.SSE,
             url: "https://mcp.example.com/events",
             reconnect_delay: 10_000}  # 10 seconds
 ```
@@ -474,7 +474,7 @@ transport: {MCPClient.Transports.SSE,
 **Options:**
 
 ```elixir
-{MCPClient.Transports.HTTP, [
+{McpClient.Transports.HTTP, [
   base_url: String.t(),                      # Required
   sse_path: String.t(),                      # Default: "/sse"
   message_path: String.t(),                  # Default: "/messages"
@@ -489,17 +489,17 @@ transport: {MCPClient.Transports.SSE,
 
 ```elixir
 # Basic HTTP+SSE
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://mcp.example.com"}
 
 # Custom paths
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://mcp.example.com",
             sse_path: "/api/v1/sse",
             message_path: "/api/v1/messages"}
 
 # With static auth headers
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://mcp.example.com",
             headers: [
               {"authorization", "Bearer #{static_token}"},
@@ -507,7 +507,7 @@ transport: {MCPClient.Transports.HTTP,
             ]}
 
 # With OAuth 2.1
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://mcp.example.com",
             oauth: %{
               client_id: System.get_env("MCP_CLIENT_ID"),
@@ -544,8 +544,8 @@ The transport will:
 **Development** (fast feedback, verbose):
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio,
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio,
               cmd: "python",
               args: ["server.py"],
               env: [{"DEBUG", "1"}]},
@@ -562,8 +562,8 @@ The transport will:
 **Production** (resilient, conservative):
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.HTTP,
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.HTTP,
               base_url: System.get_env("MCP_SERVER_URL"),
               oauth: %{
                 client_id: System.get_env("MCP_CLIENT_ID"),
@@ -590,7 +590,7 @@ defmodule MyApp.Application do
     mcp_config = Application.get_env(:my_app, :mcp_client)
 
     children = [
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.MCPConnection,
         transport: mcp_config[:transport],
         request_timeout: mcp_config[:request_timeout],
@@ -610,7 +610,7 @@ import Config
 
 config :my_app, :mcp_client,
   transport: {
-    MCPClient.Transports.Stdio,
+    McpClient.Transports.Stdio,
     cmd: System.get_env("MCP_SERVER_CMD", "mcp-server"),
     args: String.split(System.get_env("MCP_SERVER_ARGS", ""), " ")
   },
@@ -626,25 +626,25 @@ defmodule MyApp.Application do
   def start(_type, _args) do
     children = [
       # SQLite database
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.DatabaseConnection,
-        transport: {MCPClient.Transports.Stdio,
+        transport: {McpClient.Transports.Stdio,
                     cmd: "uvx",
                     args: ["mcp-server-sqlite", "--db-path", "./data.db"]}
       ]},
 
       # Filesystem
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.FilesystemConnection,
-        transport: {MCPClient.Transports.Stdio,
+        transport: {McpClient.Transports.Stdio,
                     cmd: "uvx",
                     args: ["mcp-server-filesystem", "./files"]}
       ]},
 
       # Cloud API
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.CloudConnection,
-        transport: {MCPClient.Transports.HTTP,
+        transport: {McpClient.Transports.HTTP,
                     base_url: "https://mcp.example.com",
                     oauth: get_oauth_config()}
       ]}
@@ -667,13 +667,13 @@ Access connections:
 
 ```elixir
 # Database tools
-{:ok, tools} = MCPClient.Tools.list(MyApp.DatabaseConnection)
+{:ok, tools} = McpClient.Tools.list(MyApp.DatabaseConnection)
 
 # Filesystem resources
-{:ok, resources} = MCPClient.Resources.list(MyApp.FilesystemConnection)
+{:ok, resources} = McpClient.Resources.list(MyApp.FilesystemConnection)
 
 # Cloud prompts
-{:ok, prompts} = MCPClient.Prompts.list(MyApp.CloudConnection)
+{:ok, prompts} = McpClient.Prompts.list(MyApp.CloudConnection)
 ```
 
 ---
@@ -691,7 +691,7 @@ Access connections:
 request_timeout: 60_000  # 60 seconds
 
 # Or use per-request timeouts
-MCPClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
+McpClient.Tools.call(conn, "slow_tool", %{}, timeout: 120_000)
 ```
 
 **Symptom:** Slow response times
@@ -736,7 +736,7 @@ backoff_max: 5_000       # Max 5 seconds
 max_frame_bytes: 67_108_864  # 64MB
 
 # In transport options
-transport: {MCPClient.Transports.Stdio,
+transport: {McpClient.Transports.Stdio,
             cmd: "mcp-server",
             max_frame_bytes: 67_108_864}
 ```
@@ -756,12 +756,12 @@ transport: {MCPClient.Transports.Stdio,
 
 ```elixir
 # ❌ Bad
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://api.example.com",
             headers: [{"authorization", "Bearer hardcoded-token"}]}
 
 # ✅ Good
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: System.get_env("MCP_API_URL"),
             oauth: %{
               client_id: System.get_env("MCP_CLIENT_ID"),
@@ -776,7 +776,7 @@ transport: {MCPClient.Transports.HTTP,
 
 ```elixir
 # Only expose specific directories
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   roots: [
     %{uri: "file:///home/user/safe-directory", name: "Allowed"}
@@ -791,11 +791,11 @@ transport: {MCPClient.Transports.HTTP,
 
 ```elixir
 # ✅ Good
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "https://mcp.example.com"}  # HTTPS
 
 # ❌ Bad
-transport: {MCPClient.Transports.HTTP,
+transport: {McpClient.Transports.HTTP,
             base_url: "http://mcp.example.com"}  # HTTP (unencrypted)
 ```
 
@@ -812,7 +812,7 @@ config :logger, :console,
   format: "[$level] $message\n"
 
 # Inspect all notifications
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: fn notif ->
     IO.inspect(notif, label: "MCP Notification", pretty: true)
@@ -828,8 +828,8 @@ config :logger, :console,
 Application.put_env(:mcp_client, :test_mode, true)
 
 # In tests
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mock-server"},
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mock-server"},
   request_timeout: 1_000,  # Short timeout for fast tests
   backoff_min: 10,          # Quick reconnect for tests
   backoff_max: 100
@@ -847,7 +847,7 @@ defmodule MyApp.MCP do
   @moduledoc "MCP client configuration and helpers"
 
   def child_spec do
-    {MCPClient, build_config()}
+    {McpClient, build_config()}
   end
 
   defp build_config do
@@ -870,13 +870,13 @@ defmodule MyApp.MCP do
   defp build_transport do
     case transport_type() do
       :stdio ->
-        {MCPClient.Transports.Stdio,
+        {McpClient.Transports.Stdio,
          cmd: System.get_env("MCP_CMD", "mcp-server"),
          args: args(),
          env: env()}
 
       :http ->
-        {MCPClient.Transports.HTTP,
+        {McpClient.Transports.HTTP,
          base_url: System.fetch_env!("MCP_BASE_URL"),
          oauth: oauth_config()}
     end
@@ -927,11 +927,11 @@ defmodule MyApp.MCP do
   def conn, do: Process.whereis(__MODULE__.Connection)
 
   def call_tool(name, args, opts \\ []) do
-    MCPClient.Tools.call(conn(), name, args, opts)
+    McpClient.Tools.call(conn(), name, args, opts)
   end
 
   def read_resource(uri, opts \\ []) do
-    MCPClient.Resources.read(conn(), uri, opts)
+    McpClient.Resources.read(conn(), uri, opts)
   end
 end
 ```

@@ -253,7 +253,7 @@ Your `:closing` state:
 - B) Immediately fail them with `{:error, :shutdown}`?
 - C) Let them timeout naturally (but connection is closed)?
 
-**For MVP**: **Option B**—on entering `:closing`, iterate all inflight requests and reply `{:error, %Error{kind: :shutdown}}`. Then close transport.
+**For MVP**: **Option B**—on entering `:closing`, iterate all inflight requests and reply `{:error, %Error{type: :shutdown}}`. Then close transport.
 
 **Lock it**: Confirm shutdown semantics.
 

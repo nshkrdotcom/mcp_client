@@ -1,6 +1,6 @@
 # PROMPT_13: Prompts Feature Module
 
-**Goal:** Implement `MCPClient.Prompts` for listing and retrieving prompt templates.
+**Goal:** Implement `McpClient.Prompts` for listing and retrieving prompt templates.
 
 **Duration:** ~30 minutes | **Dependencies:** PROMPT_01-10
 
@@ -20,7 +20,7 @@
 - `GetPromptResult` - {description, messages}
 - `PromptMessage` - {role, content}
 
-**Reference:** CLIENT_FEATURES.md § MCPClient.Prompts
+**Reference:** CLIENT_FEATURES.md § McpClient.Prompts
 
 ---
 

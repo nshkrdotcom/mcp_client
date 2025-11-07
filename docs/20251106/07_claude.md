@@ -161,7 +161,7 @@ You say:
 
 But the original design specified:
 ```elixir
-{:error, %McpClient.Error{kind: :state, code: nil, message: "not ready"}}
+{:error, %McpClient.Error{type: :state, code: nil, message: "not ready"}}
 ```
 
 **Which is it?** If you return bare atoms like `:unavailable`, you lose:
@@ -171,7 +171,7 @@ But the original design specified:
 
 **Recommend**: Keep the struct even for state errors. It's 2 lines of code:
 ```elixir
-{:error, %Error{kind: :state, message: "client not ready", data: %{state: :backoff}}}
+{:error, %Error{type: :state, message: "client not ready", data: %{state: :backoff}}}
 ```
 
 ### 10. **Property test scope is too thin**

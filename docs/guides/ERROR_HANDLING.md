@@ -6,9 +6,9 @@ Comprehensive guide to handling errors in MCP Client applications.
 
 ## Overview
 
-MCP Client uses structured error handling with the `MCPClient.Error` struct. All operations return:
+MCP Client uses structured error handling with the `McpClient.Error` struct. All operations return:
 - `{:ok, result}` on success
-- `{:error, %MCPClient.Error{}}` on failure
+- `{:error, %McpClient.Error{}}` on failure
 
 This guide covers error types, handling patterns, recovery strategies, and best practices.
 
@@ -17,16 +17,16 @@ This guide covers error types, handling patterns, recovery strategies, and best 
 ## Error Structure
 
 ```elixir
-%MCPClient.Error{
+%McpClient.Error{
   type: :timeout,                    # Error type (atom)
   message: "Request timed out",      # Human-readable message
-  operation: :tools_call,            # Operation that failed (atom)
-  details: %{...},                   # Additional context (map)
+  details: %{operation: :tools_call},# Additional context (map)
   server_error: %{                   # Original server error (if applicable)
     code: -32601,
     message: "Method not found",
     data: %{...}
-  }
+  },
+  code: nil
 }
 ```
 
@@ -39,7 +39,7 @@ This guide covers error types, handling patterns, recovery strategies, and best 
 **`:timeout`** - Request or operation exceeded timeout
 
 ```elixir
-{:error, %Error{type: :timeout, operation: :tools_list}}
+{:error, %Error{type: :timeout, details: %{operation: :tools_list}}}
 ```
 
 **When it occurs:**
@@ -49,13 +49,13 @@ This guide covers error types, handling patterns, recovery strategies, and best 
 
 **How to handle:**
 ```elixir
-case MCPClient.Tools.call(conn, "slow_tool", %{}) do
+case McpClient.Tools.call(conn, "slow_tool", %{}) do
   {:ok, result} ->
     {:ok, result}
 
   {:error, %Error{type: :timeout}} ->
     # Retry with longer timeout
-    MCPClient.Tools.call(conn, "slow_tool", %{}, timeout: 60_000)
+    McpClient.Tools.call(conn, "slow_tool", %{}, timeout: 60_000)
 end
 ```
 
@@ -72,7 +72,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Tools.list(conn) do
+case McpClient.Tools.list(conn) do
   {:ok, tools} ->
     {:ok, tools}
 
@@ -133,7 +133,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Resources.read(conn, uri) do
+case McpClient.Resources.read(conn, uri) do
   {:ok, contents} ->
     {:ok, contents}
 
@@ -167,7 +167,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Resources.read(conn, huge_file_uri) do
+case McpClient.Resources.read(conn, huge_file_uri) do
   {:error, %Error{type: :oversized_frame}} ->
     Logger.error("Resource too large: #{huge_file_uri}")
     # Options:
@@ -196,10 +196,10 @@ end
 **How to handle:**
 ```elixir
 # Check capabilities first
-caps = MCPClient.server_capabilities(conn)
+caps = McpClient.server_capabilities(conn)
 
 if has_capability?(caps, [:resources, :subscribe]) do
-  MCPClient.Resources.subscribe(conn, uri)
+  McpClient.Resources.subscribe(conn, uri)
 else
   Logger.warn("Server doesn't support subscriptions")
   # Fall back to polling
@@ -220,7 +220,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Tools.call(conn, "search", params) do
+case McpClient.Tools.call(conn, "search", params) do
   {:ok, result} ->
     {:ok, result}
 
@@ -245,7 +245,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Tools.call(conn, "buggy_tool", %{}) do
+case McpClient.Tools.call(conn, "buggy_tool", %{}) do
   {:error, %Error{type: :internal_error} = error} ->
     # Log for server maintainer
     Logger.error("Server error: #{error.server_error["message"]}")
@@ -268,11 +268,11 @@ end
 **How to handle:**
 ```elixir
 # Validate tool exists first
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 tool_names = Enum.map(tools, & &1.name)
 
 if tool_name in tool_names do
-  MCPClient.Tools.call(conn, tool_name, args)
+  McpClient.Tools.call(conn, tool_name, args)
 else
   Logger.error("Tool '#{tool_name}' not found. Available: #{inspect(tool_names)}")
   {:error, :tool_not_found}
@@ -291,7 +291,7 @@ end
 
 **How to handle:**
 ```elixir
-case MCPClient.Tools.call(conn, "read_file", %{path: "/missing"}) do
+case McpClient.Tools.call(conn, "read_file", %{path: "/missing"}) do
   {:ok, %{isError: true, content: content}} ->
     # Tool ran but reported error
     error_msg = Enum.find_value(content, fn
@@ -343,17 +343,17 @@ end
 ### Basic Pattern Matching
 
 ```elixir
-case MCPClient.Tools.call(conn, tool_name, args) do
+case McpClient.Tools.call(conn, tool_name, args) do
   {:ok, result} ->
     process_result(result)
 
-  {:error, %MCPClient.Error{type: :timeout}} ->
+  {:error, %McpClient.Error{type: :timeout}} ->
     retry_with_longer_timeout()
 
-  {:error, %MCPClient.Error{type: :tool_not_found}} ->
+  {:error, %McpClient.Error{type: :tool_not_found}} ->
     {:error, :invalid_tool}
 
-  {:error, %MCPClient.Error{type: :connection_closed}} ->
+  {:error, %McpClient.Error{type: :connection_closed}} ->
     {:error, :temporarily_unavailable}
 
   {:error, error} ->
@@ -371,7 +371,7 @@ defmodule MyApp.MCP do
   end
 
   defp call_tool_with_retry(conn, name, args, attempt, max_attempts) do
-    case MCPClient.Tools.call(conn, name, args) do
+    case McpClient.Tools.call(conn, name, args) do
       {:ok, result} ->
         {:ok, result}
 
@@ -394,7 +394,7 @@ end
 
 ```elixir
 def get_data(conn, source) do
-  case MCPClient.Resources.read(conn, source) do
+  case McpClient.Resources.read(conn, source) do
     {:ok, data} ->
       {:ok, data}
 
@@ -418,10 +418,10 @@ end
 
 ```elixir
 def subscribe_or_poll(conn, uri) do
-  caps = MCPClient.server_capabilities(conn)
+  caps = McpClient.server_capabilities(conn)
 
   if supports_subscription?(caps) do
-    case MCPClient.Resources.subscribe(conn, uri) do
+    case McpClient.Resources.subscribe(conn, uri) do
       :ok ->
         {:ok, :subscribed}
       {:error, error} ->
@@ -459,7 +459,7 @@ defmodule MyApp.CircuitBreaker do
             record_success(breaker)
             success
 
-          {:error, %MCPClient.Error{}} = error ->
+          {:error, %McpClient.Error{}} = error ->
             record_failure(breaker)
             error
         end
@@ -479,7 +479,7 @@ end
 
 # Usage:
 CircuitBreaker.call_with_breaker(MyApp.MCPBreaker, fn ->
-  MCPClient.Tools.call(conn, "unreliable_tool", %{})
+  McpClient.Tools.call(conn, "unreliable_tool", %{})
 end)
 ```
 
@@ -506,7 +506,7 @@ defmodule MyApp.ErrorTracker do
 end
 
 # Usage:
-case MCPClient.Tools.call(conn, tool, args) do
+case McpClient.Tools.call(conn, tool, args) do
   {:ok, result} ->
     {:ok, result}
 
@@ -560,7 +560,7 @@ Connection automatically reconnects on failure:
 Process.sleep(1000)
 
 # Retry operation
-case MCPClient.Tools.list(conn) do
+case McpClient.Tools.list(conn) do
   {:ok, tools} ->
     # Reconnected successfully
     {:ok, tools}
@@ -575,7 +575,7 @@ end
 
 ```elixir
 def get_tools(conn) do
-  case MCPClient.Tools.list(conn) do
+  case McpClient.Tools.list(conn) do
     {:ok, tools} ->
       {:ok, tools}
 
@@ -603,7 +603,7 @@ end
 
 ```elixir
 def execute_tool(conn, tool_name, args) do
-  case MCPClient.Tools.call(conn, tool_name, args) do
+  case McpClient.Tools.call(conn, tool_name, args) do
     {:ok, result} ->
       {:ok, result}
 
@@ -657,7 +657,7 @@ defmodule MyApp.MCP.ErrorLogger do
   defp format_error(error, context) do
     """
     MCP Error: #{error.type}
-    Operation: #{error.operation}
+    Operation: #{error.details[:operation] || :unknown}
     Message: #{error.message}
     Context: #{inspect(context)}
     Details: #{inspect(error.details)}
@@ -667,7 +667,7 @@ defmodule MyApp.MCP.ErrorLogger do
 end
 
 # Usage:
-case MCPClient.Tools.call(conn, tool, args) do
+case McpClient.Tools.call(conn, tool, args) do
   {:ok, result} ->
     {:ok, result}
 
@@ -690,7 +690,7 @@ end
 ```elixir
 defmodule MyApp.ToolExecutorTest do
   use ExUnit.Case
-  alias MCPClient.Error
+  alias McpClient.Error
 
   describe "execute_tool/3" do
     test "handles timeout errors" do
@@ -723,19 +723,19 @@ end
 ```elixir
 @tag :integration
 test "handles real server errors" do
-  {:ok, conn} = MCPClient.start_link(
-    transport: {MCPClient.Transports.Stdio, cmd: "test-server"}
+  {:ok, conn} = McpClient.start_link(
+    transport: {McpClient.Transports.Stdio, cmd: "test-server"}
   )
 
   # Call non-existent tool
   assert {:error, %Error{type: :tool_not_found}} =
-    MCPClient.Tools.call(conn, "nonexistent", %{})
+    McpClient.Tools.call(conn, "nonexistent", %{})
 
   # Call tool with invalid params
   assert {:error, %Error{type: :invalid_params}} =
-    MCPClient.Tools.call(conn, "search", %{invalid: "param"})
+    McpClient.Tools.call(conn, "search", %{invalid: "param"})
 
-  MCPClient.stop(conn)
+  McpClient.stop(conn)
 end
 ```
 
@@ -781,7 +781,7 @@ end
 ```elixir
 defmodule MyApp.MCP.HealthCheck do
   def check(conn) do
-    case MCPClient.Connection.call(conn, "ping", %{}, 5_000) do
+    case McpClient.Connection.call(conn, "ping", %{}, 5_000) do
       {:ok, _} -> :healthy
       {:error, %Error{type: :timeout}} -> :degraded
       {:error, %Error{type: :connection_closed}} -> :unhealthy
@@ -818,13 +818,13 @@ end
 
 ```elixir
 # Connection will automatically reconnect, but in-flight requests fail
-case MCPClient.Tools.call(conn, tool, args) do
+case McpClient.Tools.call(conn, tool, args) do
   {:error, %Error{type: :connection_closed}} ->
     # Wait for reconnection (backoff handles this)
     Process.sleep(2000)
 
     # Retry once
-    case MCPClient.Tools.call(conn, tool, args) do
+    case McpClient.Tools.call(conn, tool, args) do
       {:ok, result} -> {:ok, result}
       error -> error  # Give up
     end
@@ -849,7 +849,7 @@ defp resilient_call_loop(conn, method, params, start_time, max_wait) do
   if elapsed > max_wait do
     {:error, :max_wait_exceeded}
   else
-    case MCPClient.Connection.call(conn, method, params, 5000) do
+    case McpClient.Connection.call(conn, method, params, 5000) do
       {:ok, result} ->
         {:ok, result}
 

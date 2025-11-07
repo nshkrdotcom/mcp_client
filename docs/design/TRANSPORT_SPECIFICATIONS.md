@@ -6,7 +6,7 @@
 
 ## Overview
 
-The MCP client supports three transport mechanisms for communicating with servers. Each transport implements the `MCPClient.Transport` behavior and provides JSON-RPC 2.0 message exchange with flow control.
+The MCP client supports three transport mechanisms for communicating with servers. Each transport implements the `McpClient.Transport` behavior and provides JSON-RPC 2.0 message exchange with flow control.
 
 All transports share:
 - **Active-once flow control** - Connection controls delivery via `set_active/2`
@@ -21,7 +21,7 @@ All transports share:
 All transports must implement this behavior:
 
 ```elixir
-defmodule MCPClient.Transport do
+defmodule McpClient.Transport do
   @moduledoc """
   Behavior for MCP transport implementations.
 
@@ -111,7 +111,7 @@ Transports send frames to Connection via messages:
 
 **Purpose:** Communicate with local processes via standard input/output (most common for local MCP servers).
 
-**Module:** `MCPClient.Transports.Stdio`
+**Module:** `McpClient.Transports.Stdio`
 
 ### Architecture
 
@@ -146,9 +146,9 @@ Transports send frames to Connection via messages:
 ### Configuration
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.Stdio,
+    McpClient.Transports.Stdio,
     cmd: "uvx",                          # Executable
     args: ["mcp-server-sqlite"],         # Arguments
     env: [{"DEBUG", "1"}],               # Environment variables
@@ -165,6 +165,7 @@ Transports send frames to Connection via messages:
 | `args` | `[String.t()]` | `[]` | Command arguments |
 | `env` | `[{String.t(), String.t()}]` | `[]` | Environment variables (merge with system env) |
 | `cd` | `String.t()` | `nil` | Working directory (default: current dir) |
+| `stderr` | `:merge | :log` | `:merge` | Pipe stderr to stdout (`:merge`) or spawn Logger process (`:log`) |
 | `max_frame_bytes` | `pos_integer()` | `16_777_216` | Max frame size (16MB) |
 | `read_buffer_size` | `pos_integer()` | `65_536` | Read buffer size (64KB) |
 
@@ -172,30 +173,62 @@ Transports send frames to Connection via messages:
 
 **Port Configuration:**
 ```elixir
-Port.open({:spawn_executable, executable}, [
+opts = [
   :binary,
   :exit_status,
-  {:packet, :line},          # Newline-delimited framing
   {:args, args},
   {:env, env},
-  {:cd, cd},
-  {:line, max_frame_bytes}   # Reject lines > limit
-])
+  {:cd, cd}
+]
+
+opts =
+  case stderr_mode do
+    :merge -> [:stderr_to_stdout | opts]
+    :log -> opts
+  end
+
+Port.open({:spawn_executable, executable}, opts)
 ```
+We implement framing ourselves (no `:packet` modes) so we can support standard JSON-RPC `Content-Length` headers.
 
 **Flow Control:**
-- Port starts paused (no automatic reading)
-- `set_active(:once)` enables one line read
-- After line received, port pauses again
-- Connection must call `set_active(:once)` to continue
+- The Port still delivers messages to the transport GenServer, but the GenServer only reads header bytes while paused; body bytes remain unread, so the OS pipe applies backpressure.
+- `set_active(:once)` flips the transport into “deliver next frame” mode: it finishes reading the declared body, enqueues the frame, and then pauses again.
+- Connection must call `set_active(:once)` after handling a frame; `set_active_once_safe/1` no-ops in `:backoff`/`:closing`.
 
-**Frame Format:**
-- JSON-RPC 2.0 message + newline (`\n`)
-- Example: `{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}\n`
+**Frame Format (JSON-RPC over stdio):**
+```
+Content-Length: <bytes>\r\n
+\r\n
+<JSON payload bytes>
+```
+- Header parsing stops at `\r\n\r\n`; we reject any declared length > `max_frame_bytes` before allocating the buffer.
+- Example frame:
+  ```
+  Content-Length: 67\r\n
+  \r\n
+  {"jsonrpc":"2.0","id":1,"method":"ping","params":{}}
+  ```
+- Notification example (no `id`):
+  ```
+  Content-Length: 74\r\n
+  \r\n
+  {"jsonrpc":"2.0","method":"$/cancelRequest","params":{"requestId":123}}
+  ```
+- Request example (with `id`):
+  ```
+  Content-Length: <bytes>\r\n
+  \r\n
+  {"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"search","arguments":{"query":"TODO"}}}
+  ```
+  - Compute `Content-Length` from the UTF-8 byte size (`byte_size/1`).
+  - Use string keys exactly as on the wire.
+  - Notifications are identical frames without the `"id"` field (see above).
+- Notifications are written with `Transport.send_frame/2` just like requests; JSON-RPC treats them as ordinary frames that simply omit the `id`.
 
 **Subprocess Lifecycle:**
 1. **Start:** Fork subprocess via Port
-2. **Running:** Exchange newline-delimited JSON
+2. **Running:** Exchange Content-Length framed JSON payloads
 3. **Close:** Send EOF to stdin, wait for exit
 4. **Crash:** Port sends `{:EXIT, port, reason}`, transport notifies Connection
 
@@ -211,11 +244,12 @@ Port.open({:spawn_executable, executable}, [
 **send_frame/2 behavior:**
 ```elixir
 def send_frame(transport, frame) do
-  # Add newline if not present
-  frame = if String.ends_with?(frame, "\n"), do: frame, else: frame <> "\n"
+  json = IO.iodata_to_binary(frame)
+  byte_size(json) <= transport.max_frame_bytes || raise ArgumentError, "frame too large"
+  header = ["Content-Length: ", Integer.to_string(byte_size(json)), "\r\n\r\n"]
 
   try do
-    Port.command(port, frame)
+    Port.command(port, [header, json])
     :ok
   catch
     :error, :badarg -> {:error, :closed}  # Port closed
@@ -252,7 +286,7 @@ test "stdio transport with echo server" do
   :ok = Stdio.set_active(transport, :once)
 
   # Send frame
-  :ok = Stdio.send_frame(transport, ~s|{"test": 1}\n|)
+  :ok = Stdio.send_frame(transport, ~s|{"test": 1}|)
 
   # Receive echo
   assert_receive {:transport, :frame, frame}, 1000
@@ -271,7 +305,7 @@ end
 
 **Purpose:** Receive server-initiated updates via HTTP SSE (unidirectional: server → client).
 
-**Module:** `MCPClient.Transports.SSE`
+**Module:** `McpClient.Transports.SSE`
 
 **Note:** SSE is **one-way only** (server → client). For bidirectional communication, use HTTP+SSE hybrid transport.
 
@@ -304,9 +338,9 @@ end
 ### Configuration
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.SSE,
+    McpClient.Transports.SSE,
     url: "https://mcp.example.com/sse",
     headers: [{"authorization", "Bearer #{token}"}]
   }
@@ -396,7 +430,7 @@ end
 
 **Purpose:** Full bidirectional communication via HTTP POST (client → server) + SSE (server → client).
 
-**Module:** `MCPClient.Transports.HTTP`
+**Module:** `McpClient.Transports.HTTP`
 
 ### Architecture
 
@@ -428,9 +462,9 @@ end
 ### Configuration
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.HTTP,
+    McpClient.Transports.HTTP,
     base_url: "https://mcp.example.com",
     sse_path: "/sse",
     message_path: "/messages",
@@ -797,3 +831,4 @@ Each transport must have:
 
 **Status**: Ready for implementation (stdio in PROMPT_06, SSE/HTTP post-MVP)
 **Next**: Implement stdio transport first, defer SSE/HTTP to post-MVP phases
+- **stderr handling:** In `:merge` mode we set `:stderr_to_stdout` so server logs arrive as frames tagged `{:transport, :stderr, binary}`; in `:log` mode a dedicated Logger task drains stderr to avoid back-pressure.

@@ -17,7 +17,7 @@ Failing immediately pushes retry logic to every caller. Blocking violates the no
 - Keep transport non-blocking (no indefinite waits)
 - Bounded retry attempts (fail eventually)
 - Inline retry in Connection (no separate retry process)
-- Use gen_statem timeouts (no manual timers)
+- Use per-request timers via `:erlang.send_after/3` (no shared :state_timeout queue)
 - Provide clear error when retry exhausted
 
 ## Considered Options
@@ -29,7 +29,7 @@ Failing immediately pushes retry logic to every caller. Blocking violates the no
 
 **Option 2: Bounded inline retry in Connection**
 - Retry N times with small delay between attempts
-- Use gen_statem `:state_timeout` for retry scheduling
+- Use `:erlang.send_after/3` per retry (message handled via `:info`)
 - Return `{:error, :backpressure}` if all retries fail
 
 **Option 3: Separate retry process**
@@ -97,22 +97,23 @@ def handle_event({:call, from}, {:call_tool, name, args, opts}, :ready, data) do
 
   case Transport.send_frame(data.transport, frame) do
     :ok ->
-      # Success - store request and start timeout
+      timer_ref = :erlang.send_after(timeout, self(), {:req_timeout, id})
+      request = Map.put(request, :timer_ref, timer_ref)
       data = put_in(data.requests[id], request)
-      actions = [{:state_timeout, timeout, {:request_timeout, id}}]
-      {:keep_state, data, actions}
+      {:keep_state, data, []}
 
     {:error, :busy} ->
       # First failure - schedule retry for THIS id
       retry_state = %{frame: frame, from: from, request: request, attempts: 1}
-      data = put_in(data.retries[id], retry_state)
       delay = jitter(@retry_delay_ms, @retry_jitter)
-      actions = [{:state_timeout, delay, {:retry_send, id}}]  # ← id is keyed
-      {:keep_state, data, actions}
+      retry_ref = :erlang.send_after(delay, self(), {:retry_send, id, frame})
+      retry_state = Map.put(retry_state, :timer_ref, retry_ref)
+      data = put_in(data.retries[id], retry_state)
+      {:keep_state, data, []}
 
     {:error, reason} ->
       # Fatal error - fail immediately
-      error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
+      error = %Error{type: :transport, message: "send failed: #{inspect(reason)}"}
       {:keep_state, data, [{:reply, from, {:error, error}}]}
   end
 end
@@ -120,45 +121,51 @@ end
 
 **Retry handler (per-id):**
 ```elixir
-def handle_event(:state_timeout, {:retry_send, id}, :ready, data) do
+def handle_event(:info, {:retry_send, id, frame}, :ready, data) do
   case Map.get(data.retries, id) do
     nil ->
       # Retry state was cleared (e.g., during stop) - ignore
       {:keep_state, data}
 
-    %{frame: frame, from: from, request: request, attempts: attempts} ->
+    %{frame: ^frame, from: from, request: request, attempts: attempts} = retry_state ->
+      _ = :erlang.cancel_timer(retry_state.timer_ref)
+
       case Transport.send_frame(data.transport, frame) do
         :ok ->
           # Retry succeeded - promote to tracked request
-          data = data
-                 |> Map.update!(:retries, &Map.delete(&1, id))
-                 |> put_in([:requests, id], request)
-          # Use stored timeout (preserves per-call override)
           timeout = request.timeout
-          actions = [{:state_timeout, timeout, {:request_timeout, id}}]
-          {:keep_state, data, actions}
+          timer_ref = :erlang.send_after(timeout, self(), {:req_timeout, id})
+          request = Map.put(request, :timer_ref, timer_ref)
+          data =
+            data
+            |> update_in([:retries], &Map.delete(&1, id))
+            |> put_in([:requests, id], request)
+          {:keep_state, data, []}
 
         {:error, :busy} when attempts < @retry_attempts ->
           # Still busy, retry again
-          data = put_in(data.retries[id].attempts, attempts + 1)
           delay = jitter(@retry_delay_ms, @retry_jitter)
-          actions = [{:state_timeout, delay, {:retry_send, id}}]
-          {:keep_state, data, actions}
+          retry_ref = :erlang.send_after(delay, self(), {:retry_send, id, frame})
+          data =
+            data
+            |> put_in([:retries, id, :attempts], attempts + 1)
+            |> put_in([:retries, id, :timer_ref], retry_ref)
+          {:keep_state, data, []}
 
         {:error, :busy} ->
           # Exhausted retries - fail with backpressure error
           data = Map.update!(data, :retries, &Map.delete(&1, id))
           error = %Error{
-            kind: :transport,
+            type: :transport,
             message: "transport busy after #{@retry_attempts} attempts",
-            data: %{retries: attempts}
+            details: %{retries: attempts}
           }
           {:keep_state, data, [{:reply, from, {:error, error}}]}
 
         {:error, reason} ->
           # Fatal error
           data = Map.update!(data, :retries, &Map.delete(&1, id))
-          error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
+          error = %Error{type: :transport, message: "send failed: #{inspect(reason)}"}
           {:keep_state, data, [{:reply, from, {:error, error}}]}
       end
   end
@@ -168,9 +175,9 @@ end
 **Error returned to caller after exhausted retries:**
 ```elixir
 {:error, %McpClient.Error{
-  kind: :transport,
+  type: :transport,
   message: "transport busy after 3 attempts",
-  data: %{retries: 3}
+  details: %{retries: 3}
 }}
 ```
 
@@ -185,10 +192,9 @@ end
 
 **Negative/Risks:**
 - Retry state consumes memory per concurrent busy request
-  - Each in-retry request stores **full frame binary** + metadata
-  - Worst case: N concurrent retries × frame size (up to 16MB per frame)
-  - Bounded by total concurrent requests (typically < 100)
-  - Post-MVP optimization: reconstruct frame from `{id, method, params}` instead of storing binary
+  - Each in-retry request stores a reference to the encoded frame; we never slice/append
+  - Worst case: N concurrent retries × 16MB (still bounded by request concurrency)
+  - For extremely large payloads we can store `{method, params}` and re-encode on retry (documented as follow-up)
 - Multiple concurrent retries can fire simultaneously
   - If N requests all hit `:busy`, N retry timers scheduled
   - Acceptable: jitter spreads them out, retry count is bounded
@@ -260,9 +266,10 @@ config :mcp_client,
 - Duplicate replies to callers (shutdown error + retry result)
 
 **Solution:** On entering `:closing` state:
-1. Clear `data.retries` map (all retry state discarded)
-2. Retry handlers check if `id` exists in `retries` before processing
-3. If missing, return early (no-op)
+1. Cancel each retry timer via `:erlang.cancel_timer/1`
+2. Clear `data.retries` map (all retry state discarded)
+3. Retry handlers check if `id` exists in `retries` before processing
+4. If missing, return early (no-op)
 
 **Implementation:**
 ```elixir
@@ -277,7 +284,7 @@ def handle_event({:call, from}, :stop, :ready, data) do
 end
 
 # In :closing state, ignore retry events
-def handle_event(:state_timeout, {:retry_send, _id}, :closing, data) do
+def handle_event(:info, {:retry_send, _id, _frame}, :closing, data) do
   {:keep_state, data}  # Drop, already shutting down
 end
 ```
@@ -320,7 +327,7 @@ end
 ```elixir
 test "returns error after 3 busy responses" do
   # Mock transport: always :busy
-  assert {:error, %Error{kind: :transport, message: msg}} =
+  assert {:error, %Error{type: :transport, message: msg}} =
     McpClient.call_tool(client, "test", %{})
   assert msg =~ "busy after 3 attempts"
 end

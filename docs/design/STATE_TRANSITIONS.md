@@ -34,8 +34,12 @@ This document provides the complete, authoritative state transition table for th
 | Type | Description | Examples |
 |------|-------------|----------|
 | **ctl** | Control events (user calls, stop) | `{:call, from, ...}` |
-| **io** | I/O events (transport messages) | `{:info, {:transport, :frame, ...}}` |
-| **int** | Internal events (timers, state actions) | `{:state_timeout, ...}`, `{:internal, ...}` |
+| **io** | External messages (`:info`) | `{:info, {:transport, :frame, ...}}`, `{:info, {:req_timeout, id}}` |
+| **int** | Internal events (`:state_timeout`, `:internal`) | `{:state_timeout, :init_timeout}`, `{:internal, ...}` |
+
+**Timer invariant:** only one `:state_timeout` is armed at any time (`:init_timeout`, `:backoff_expire`, or `:sweep_tombstones`). All per-request timers use `:erlang.send_after/3` and arrive via `:info`.
+
+**Active-once invariant:** Never call `Transport.set_active(:once)` while in `:backoff` or `:closing`; use the `set_active_once_safe/1` helper so late activations become no-ops in those states.
 
 ---
 
@@ -73,7 +77,7 @@ See ADR-0002 and ADR-0004 for transport behavior specification.
 | `{:internal, {:spawn_transport, opts}}` | - | Spawn transport; wait for transport_up | `:initializing` |
 | `{:internal, {:spawn_error, reason}}` | - | Log error; schedule backoff (1st attempt) | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; exit(normal) | `:closing` |
-| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :starting}}}` | `:starting` |
+| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{type: :state, data: %{state: :starting}}}` | `:starting` |
 
 ---
 
@@ -91,7 +95,7 @@ See ADR-0002 and ADR-0004 for transport behavior specification.
 | `{:state_timeout, :init_timeout}` | - | Log timeout; close transport; schedule backoff | `:backoff` |
 | `{:info, {:transport, :down, reason}}` | - | Log reason; schedule backoff | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; close transport | `:closing` |
-| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :initializing}}}` | `:initializing` |
+| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{type: :state, data: %{state: :initializing}}}` | `:initializing` |
 
 **Capability validation (guard):**
 ```elixir
@@ -104,16 +108,14 @@ defp has_valid_version?(caps) do
   is_binary(version) and compatible_version?(version)
 end
 
-# Accept YYYY-MM compatibility for MVP (same minor version window)
-# This is MVP policy; may tighten to exact match post-MVP
+# MVP policy: exact match only
 defp compatible_version?("2024-11-05"), do: true
-defp compatible_version?(<<"2024-11", _rest::binary>>), do: true
 defp compatible_version?(_), do: false
 ```
 
 **Notes:**
 - Accepts both string and atom keys for caps to accommodate test transports
-- YYYY-MM compatibility (same minor version) is **MVP policy**; spec may require exact version match in future
+- Any version other than `"2024-11-05"` transitions to `:backoff` with a protocol error
 
 ---
 
@@ -126,23 +128,19 @@ defp compatible_version?(_), do: false
 | `{:info, {:transport, :frame, binary}}` | Response; ID in `tombstones` | Drop (stale response); set_active(:once) | `:ready` |
 | `{:info, {:transport, :frame, binary}}` | Response; ID unknown | Log at debug; drop; set_active(:once) | `:ready` |
 | `{:info, {:transport, :frame, binary}}` | Invalid JSON | Log warn; set_active(:once) | `:ready` |
-| `{:info, {:transport, :frame, binary}}` | Server notification (reset method) | Tombstone all requests; fail/clear retries; close transport; start init | `:initializing` |
 | `{:info, {:transport, :frame, binary}}` | Server notification (other) | Dispatch to handlers (sync); set_active(:once) | `:ready` |
 | `{:info, {:transport, :frame, binary}}` | Server request | Reply JSON-RPC error (-32601 method not found); log at debug; set_active(:once) | `:ready` |
 | `{:info, {:transport, :down, reason}}` | - | Tombstone all requests; fail/clear retries; **do not re-arm set_active**; schedule backoff | `:backoff` |
-| `{:state_timeout, {:request_timeout, id}}` | ID in `requests` | Send `$/cancelRequest` (single attempt, no retry); tombstone ID; reply timeout | `:ready` |
-| `{:state_timeout, {:request_timeout, id}}` | ID not in `requests` | Ignore (already handled) | `:ready` |
+| `{:info, {:req_timeout, id}}` | ID in `requests` | Send `$/cancelRequest` (single attempt, no retry); tombstone ID; reply timeout | `:ready` |
+| `{:info, {:req_timeout, id}}` | ID not in `requests` | Ignore (already handled) | `:ready` |
 | `{:state_timeout, :sweep_tombstones}` | - | Remove expired tombstones; reschedule sweep | `:ready` |
 | `{:call, from, {:call_tool, name, args, opts}}` | - | Generate ID; send frame (with retry on :busy); store request or retry state; arm timeout | `:ready` |
 | `{:call, from, {:list_resources, opts}}` | - | Same as above | `:ready` |
 | `{:call, from, ...}` | Any other user call | Same pattern | `:ready` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; fail all in-flight + retries; tombstone all; clear retries; close | `:closing` |
-| `{:state_timeout, {:retry_send, id}}` | ID in `retries`; attempts < max | Retry send_frame; on success: promote to request; on :busy: increment attempts, reschedule | `:ready` |
-| `{:state_timeout, {:retry_send, id}}` | ID in `retries`; attempts >= max | Reply `{:error, :backpressure}`; delete from retries | `:ready` |
-| `{:state_timeout, {:retry_send, id}}` | ID not in `retries` | Ignore (cleared during stop) | `:ready` |
-
-**Reset notification method (configurable):**
-Default: `"notifications/cancelled"`
+| `{:info, {:retry_send, id, frame}}` | ID in `retries`; attempts < max | Retry send_frame; on success: promote to request; on `{:error, :busy}`: increment attempts, reschedule | `:ready` |
+| `{:info, {:retry_send, id, _frame}}` | ID in `retries`; attempts >= max | Reply `{:error, :backpressure}`; delete from retries | `:ready` |
+| `{:info, {:retry_send, id, _frame}}` | ID not in `retries` | Ignore (cleared during stop) | `:ready` |
 
 **Cancellation policy:**
 - `$/cancelRequest` is sent as **single attempt, no retry**
@@ -183,14 +181,17 @@ end
 | `{:info, {:transport, :up}}` | - | Start init handshake | `:initializing` |
 | `{:info, {:transport, :frame, _}}` | - | Drop (no set_active; transport inactive in backoff) | `:backoff` |
 | `{:info, {:transport, :down, _}}` | - | Ignore (already in backoff) | `:backoff` |
-| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :backoff}}}` | `:backoff` |
+| `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{type: :state, data: %{state: :backoff}}}` | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; close (if transport exists) | `:closing` |
 
 **Note:** In `:backoff`, transport is inactive (no `set_active(:once)` calls). Frames should not arrive, but if they do (race), they are dropped.
 
 **Backoff calculation:**
 ```elixir
-next_delay = min(current_delay * 2, @backoff_max) |> jitter(0.2)
+next_delay =
+  current_delay * 2
+  |> jitter(0.2)
+  |> min(@backoff_max)
 
 # First backoff: 1000ms ± 20% → 800-1200ms
 # Second: 2000ms ± 20% → 1600-2400ms
@@ -207,8 +208,8 @@ next_delay = min(current_delay * 2, @backoff_max) |> jitter(0.2)
 |-------|-------------|--------|------------|
 | `{:state_timeout, :exit}` | - | `{:stop, :normal}` (exit process) | N/A |
 | `{:call, from, :stop}` | - | Reply `{:ok, :already_closing}` (idempotent) | `:closing` |
-| `{:state_timeout, {:retry_send, _id}}` | - | Drop silently (retries cleared on entering :closing) | `:closing` |
-| `{:state_timeout, {:request_timeout, _id}}` | - | Drop silently (requests failed on entering :closing) | `:closing` |
+| `{:info, {:retry_send, _id, _frame}}` | - | Drop silently (retries cleared on entering :closing) | `:closing` |
+| `{:info, {:req_timeout, _id}}` | - | Drop silently (requests failed on entering :closing) | `:closing` |
 | `{:info, {:transport, :down, _}}` | - | Accelerate exit (stop immediately) | N/A |
 | `{:info, {:transport, :frame, _}}` | - | Drop (no set_active after close) | `:closing` |
 | _any other event_ | - | Drop (already closing) | `:closing` |
@@ -275,12 +276,13 @@ end
 defp send_with_retry(transport, frame, data, from, request) do
   case Transport.send_frame(transport, frame) do
     :ok ->
-      # Success - store request and arm timeout
+      # Success - store request and arm timeout via send_after
       id = request.id
-      data = put_in(data.requests[id], request)
       timeout = request.timeout || @default_timeout
-      actions = [{:state_timeout, timeout, {:request_timeout, id}}]
-      {:keep_state, data, actions}
+      timer_ref = :erlang.send_after(timeout, self(), {:req_timeout, id})
+      req_entry = %{request | timer_ref: timer_ref}
+      data = put_in(data.requests[id], req_entry)
+      {:keep_state, data, []}
 
     {:error, :busy} ->
       # Start retry sequence
@@ -291,14 +293,15 @@ defp send_with_retry(transport, frame, data, from, request) do
         request: request,
         attempts: 1
       }
-      data = Map.put(data, :retry, retry_state)
       delay = jitter(@retry_delay_ms, @retry_jitter)
-      actions = [{:state_timeout, delay, :retry_send}]
-      {:keep_state, data, actions}
+      retry_ref = :erlang.send_after(delay, self(), {:retry_send, request.id, frame})
+      retry_state = Map.put(retry_state, :timer_ref, retry_ref)
+      data = put_in(data.retries[request.id], retry_state)
+      {:keep_state, data, []}
 
     {:error, reason} ->
       # Fatal error - fail immediately
-      error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
+      error = %Error{type: :transport, message: "send failed: #{inspect(reason)}"}
       {:keep_state, data, [{:reply, from, {:error, error}}]}
   end
 end
@@ -316,7 +319,7 @@ defp tombstone_all_requests(data) do
 
   # Fail all in-flight callers
   for {_id, %{from: from}} <- data.requests do
-    error = %Error{kind: :transport, message: "connection lost"}
+    error = %Error{type: :transport, message: "connection lost"}
     GenServer.reply(from, {:error, error})
   end
 

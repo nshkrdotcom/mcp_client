@@ -1,4 +1,4 @@
-defmodule MCPClient.MixProject do
+defmodule McpClient.MixProject do
   use Mix.Project
 
   @version "0.1.0"
@@ -70,7 +70,7 @@ defmodule MCPClient.MixProject do
         "README.md"
       ],
       groups_for_modules: [
-        "Public API": [MCPClient],
+        "Public API": [McpClient],
         Internals: []
       ]
     ]

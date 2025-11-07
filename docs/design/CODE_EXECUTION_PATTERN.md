@@ -47,16 +47,16 @@ The **code execution pattern** addresses both challenges by treating MCP servers
 **Elixir example:**
 ```elixir
 # Agent loads all tools upfront
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 # => [Tool{name: "gdrive.getDocument", ...}, Tool{name: "salesforce.updateRecord", ...}, ...]
 # (Consumes: ~150K tokens for 1000 tools)
 
 # Agent calls tools directly, results flow through context
-{:ok, doc} = MCPClient.Tools.call(conn, "gdrive.getDocument", %{documentId: "abc123"})
+{:ok, doc} = McpClient.Tools.call(conn, "gdrive.getDocument", %{documentId: "abc123"})
 # => %{content: [%{type: "text", text: "Full transcript...(50K tokens)..."}]}
 # (Model sees entire result)
 
-{:ok, _} = MCPClient.Tools.call(conn, "salesforce.updateRecord", %{
+{:ok, _} = McpClient.Tools.call(conn, "salesforce.updateRecord", %{
   objectType: "SalesMeeting",
   recordId: "00Q5f000001abcXYZ",
   data: %{Notes: doc.content.text}  # Model writes full text again
@@ -104,7 +104,7 @@ The **code execution pattern** addresses both challenges by treating MCP servers
 # lib/mcp_servers/google_drive.ex
 defmodule MCPServers.GoogleDrive do
   def get_document(conn, document_id) do
-    MCPClient.Connection.call(conn, "google_drive__get_document",
+    McpClient.Connection.call(conn, "google_drive__get_document",
                               %{documentId: document_id})
   end
 end
@@ -112,7 +112,7 @@ end
 # lib/mcp_servers/salesforce.ex
 defmodule MCPServers.Salesforce do
   def update_record(conn, object_type, record_id, data) do
-    MCPClient.Connection.call(conn, "salesforce__update_record",
+    McpClient.Connection.call(conn, "salesforce__update_record",
                               %{objectType: object_type, recordId: record_id, data: data})
   end
 end
@@ -170,13 +170,13 @@ MCP Client provides the **protocol implementation** that both patterns build on:
 
 ```elixir
 # Core API used by both patterns:
-MCPClient.Connection.call(conn, method, params, timeout)
-MCPClient.Connection.notify(conn, method, params)
+McpClient.Connection.call(conn, method, params, timeout)
+McpClient.Connection.notify(conn, method, params)
 ```
 
 **Pattern A (Direct)** uses high-level wrappers:
 ```elixir
-MCPClient.Tools.call(conn, "search", %{query: "test"})
+McpClient.Tools.call(conn, "search", %{query: "test"})
 # Internally calls: Connection.call(conn, "tools/call", %{name: "search", arguments: %{query: "test"}})
 ```
 
@@ -199,7 +199,7 @@ Our feature modules (PROMPT_10-15) serve both patterns:
 **Direct use:**
 ```elixir
 # User calls directly
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 ```
 
 **Code generation use:**
@@ -207,8 +207,8 @@ Our feature modules (PROMPT_10-15) serve both patterns:
 # mix mcp.gen.server uses internally
 defmodule Mix.Tasks.Mcp.Gen.Server do
   def run([server_name | _]) do
-    {:ok, conn} = MCPClient.start_link(...)
-    {:ok, tools} = MCPClient.Tools.list(conn)  # Used to generate modules
+    {:ok, conn} = McpClient.start_link(...)
+    {:ok, tools} = McpClient.Tools.list(conn)  # Used to generate modules
 
     Enum.each(tools, fn tool ->
       generate_module(server_name, tool)
@@ -262,10 +262,10 @@ Add search capability to find relevant tools:
 
 ```elixir
 # Search across all connected servers
-{:ok, results} = MCPClient.Tools.search(conn, "salesforce update", detail: :name_only)
+{:ok, results} = McpClient.Tools.search(conn, "salesforce update", detail: :name_only)
 # => ["salesforce__update_record", "salesforce__update_lead"]
 
-{:ok, results} = MCPClient.Tools.search(conn, "salesforce update", detail: :full)
+{:ok, results} = McpClient.Tools.search(conn, "salesforce update", detail: :full)
 # => [%Tool{name: "salesforce__update_record", inputSchema: {...}, ...}]
 
 # Detail levels:
@@ -276,7 +276,7 @@ Add search capability to find relevant tools:
 
 Implementation:
 ```elixir
-defmodule MCPClient.Tools do
+defmodule McpClient.Tools do
   @spec search(pid(), String.t(), Keyword.t()) :: {:ok, [Tool.t()]} | {:error, Error.t()}
   def search(conn, query, opts \\ []) do
     # Get all tools (cached)
@@ -318,7 +318,7 @@ Code execution enables data transformation before results reach the model.
 **Without code execution:**
 ```elixir
 # All 10,000 rows flow through model context
-{:ok, sheet} = MCPClient.Resources.read(conn, "sheet://abc123")
+{:ok, sheet} = McpClient.Resources.read(conn, "sheet://abc123")
 # Model receives entire sheet: 10,000 rows × 50 tokens/row = 500K tokens
 
 # Model must filter in its context
@@ -341,7 +341,7 @@ IO.inspect(Enum.take(pending, 5), label: "Sample")
 **Without code execution:**
 ```elixir
 # Full dataset in context for aggregation
-{:ok, sales} = MCPClient.Tools.call(conn, "salesforce.query", %{
+{:ok, sales} = McpClient.Tools.call(conn, "salesforce.query", %{
   query: "SELECT Amount, CloseDate FROM Opportunity LIMIT 10000"
 })
 # 10,000 records in context
@@ -488,7 +488,7 @@ IO.puts("Synced #{length(sheet.rows)} leads")
 
 **MCP Client tokenization layer** (post-MVP feature):
 ```elixir
-defmodule MCPClient.Tokenizer do
+defmodule McpClient.Tokenizer do
   @moduledoc """
   Tokenizes sensitive data before model sees it, untokenizes before sending to servers.
   """
@@ -632,7 +632,7 @@ Running agent-generated code requires secure sandboxing:
 
 **Example: Docker sandbox**
 ```elixir
-defmodule MCPClient.Sandbox do
+defmodule McpClient.Sandbox do
   def execute(code, conn_config) do
     # Write code to temp file
     code_path = write_temp_file(code)
@@ -672,12 +672,12 @@ Generating modules from tool definitions:
 defmodule Mix.Tasks.Mcp.Gen.Server do
   def run([server_name | args]) do
     # Connect to server
-    {:ok, conn} = MCPClient.start_link(
+    {:ok, conn} = McpClient.start_link(
       transport: build_transport(server_name, args)
     )
 
     # Get tool definitions
-    {:ok, tools} = MCPClient.Tools.list(conn)
+    {:ok, tools} = McpClient.Tools.list(conn)
 
     # Generate module per tool
     Enum.each(tools, fn tool ->
@@ -704,7 +704,7 @@ defmodule Mix.Tasks.Mcp.Gen.Server do
       \"\"\"
 
       def call(conn, args) do
-        MCPClient.Connection.call(conn, "#{server}__#{tool.name}", args)
+        McpClient.Connection.call(conn, "#{server}__#{tool.name}", args)
       end
     end
     """
@@ -718,7 +718,7 @@ Cache generated modules to avoid regeneration:
 
 ```elixir
 # Cache generated modules
-defmodule MCPClient.CodeGen.Cache do
+defmodule McpClient.CodeGen.Cache do
   use Agent
 
   def start_link(_) do
@@ -747,9 +747,9 @@ end
 
 Start with direct tool calls:
 ```elixir
-{:ok, conn} = MCPClient.start_link(...)
-{:ok, tools} = MCPClient.Tools.list(conn)
-{:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "test"})
+{:ok, conn} = McpClient.start_link(...)
+{:ok, tools} = McpClient.Tools.list(conn)
+{:ok, result} = McpClient.Tools.call(conn, "search", %{query: "test"})
 ```
 
 **Works well for:**
@@ -794,7 +794,7 @@ alias MCPServers.Salesforce
 """
 
 # Execute in sandbox
-{:ok, output} = MCPClient.Sandbox.execute(code, conn)
+{:ok, output} = McpClient.Sandbox.execute(code, conn)
 ```
 
 **Works well for:**
@@ -850,7 +850,7 @@ Cloudflare's approach is similar but emphasizes the performance benefits. Both r
 
 **1. Progressive Tool Discovery API**
 ```elixir
-MCPClient.Tools.search(conn, "salesforce", detail: :name_only)
+McpClient.Tools.search(conn, "salesforce", detail: :name_only)
 ```
 
 **2. Code Generation Tool**
@@ -860,23 +860,23 @@ mix mcp.gen.server google_drive
 
 **3. Sandbox Execution**
 ```elixir
-MCPClient.Sandbox.execute(code, conn)
+McpClient.Sandbox.execute(code, conn)
 ```
 
 **4. PII Tokenization**
 ```elixir
-MCPClient.Tokenizer.tokenize_response(response, rules)
+McpClient.Tokenizer.tokenize_response(response, rules)
 ```
 
 **5. Skills Pattern**
 ```elixir
-MCPClient.Skills.save("export_csv", code)
-MCPClient.Skills.list()
+McpClient.Skills.save("export_csv", code)
+McpClient.Skills.list()
 ```
 
 **6. Tool Caching**
 ```elixir
-MCPClient.CodeGen.Cache.get(server, tool)
+McpClient.CodeGen.Cache.get(server, tool)
 ```
 
 ---

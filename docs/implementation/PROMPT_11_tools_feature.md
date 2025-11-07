@@ -1,6 +1,6 @@
 # PROMPT_11: Tools Feature Module
 
-**Goal:** Implement `MCPClient.Tools` module for listing and calling MCP tools.
+**Goal:** Implement `McpClient.Tools` module for listing and calling MCP tools.
 
 **Duration:** ~45 minutes
 
@@ -14,14 +14,14 @@ Tools allow servers to expose executable functions. This module provides:
 - `list/2` - List available tools from server
 - `call/4` - Execute a tool with arguments
 
-All errors are normalized through `MCPClient.Error`, and all operations use the core `Connection.call/4` function.
+All errors are normalized through `McpClient.Error`, and all operations use the core `Connection.call/4` function.
 
 ---
 
 ## Required Reading
 
-**ADR-0011:** Client Features Architecture - Section: "MCPClient.Tools"
-**CLIENT_FEATURES.md:** Section: "MCPClient.Tools" - Complete API specification
+**ADR-0011:** Client Features Architecture - Section: "McpClient.Tools"
+**CLIENT_FEATURES.md:** Section: "McpClient.Tools" - Complete API specification
 **PROTOCOL_DETAILS.md:** Sections: "tools/list" and "tools/call" message schemas
 
 ---
@@ -31,7 +31,7 @@ All errors are normalized through `MCPClient.Error`, and all operations use the 
 **File:** `lib/mcp_client/tools.ex`
 
 ```elixir
-defmodule MCPClient.Tools do
+defmodule McpClient.Tools do
   @moduledoc """
   Client API for MCP Tools feature.
 
@@ -40,16 +40,16 @@ defmodule MCPClient.Tools do
 
   ## Example
 
-      {:ok, tools} = MCPClient.Tools.list(conn)
+      {:ok, tools} = McpClient.Tools.list(conn)
       # => [%Tool{name: "search", description: "Search files", ...}]
 
-      {:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "TODO"})
+      {:ok, result} = McpClient.Tools.call(conn, "search", %{query: "TODO"})
       # => %CallResult{content: [...], isError: false}
   """
 
   use TypedStruct
 
-  alias MCPClient.{Connection, Error}
+  alias McpClient.{Connection, Error}
 
   typedstruct module: Tool do
     @moduledoc "A tool exposed by the server"
@@ -76,8 +76,8 @@ defmodule MCPClient.Tools do
 
   ## Examples
 
-      {:ok, tools} = MCPClient.Tools.list(conn)
-      {:ok, tools} = MCPClient.Tools.list(conn, timeout: 10_000)
+      {:ok, tools} = McpClient.Tools.list(conn)
+      {:ok, tools} = McpClient.Tools.list(conn, timeout: 10_000)
   """
   @spec list(pid(), list_opts()) :: {:ok, [Tool.t()]} | {:error, Error.t()}
   def list(conn, opts \\ []) do
@@ -100,9 +100,9 @@ defmodule MCPClient.Tools do
 
   ## Examples
 
-      {:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "TODO"})
+      {:ok, result} = McpClient.Tools.call(conn, "search", %{query: "TODO"})
 
-      {:ok, result} = MCPClient.Tools.call(conn, "read_file", %{path: "/foo.txt"}, timeout: 60_000)
+      {:ok, result} = McpClient.Tools.call(conn, "read_file", %{path: "/foo.txt"}, timeout: 60_000)
   """
   @spec call(pid(), String.t(), map(), call_opts()) ::
     {:ok, CallResult.t()} | {:error, Error.t()}
@@ -169,10 +169,10 @@ end
 **File:** `test/mcp_client/tools_test.exs`
 
 ```elixir
-defmodule MCPClient.ToolsTest do
+defmodule McpClient.ToolsTest do
   use ExUnit.Case, async: true
 
-  alias MCPClient.{Tools, Error}
+  alias McpClient.{Tools, Error}
   alias Tools.{Tool, CallResult}
 
   # Mock connection for testing
@@ -301,9 +301,9 @@ end
 
 **Manual verification** (with real server):
 ```elixir
-{:ok, conn} = MCPClient.start_link(transport: {Stdio, cmd: "mcp-server"})
-{:ok, tools} = MCPClient.Tools.list(conn)
-{:ok, result} = MCPClient.Tools.call(conn, List.first(tools).name, %{})
+{:ok, conn} = McpClient.start_link(transport: {Stdio, cmd: "mcp-server"})
+{:ok, tools} = McpClient.Tools.list(conn)
+{:ok, result} = McpClient.Tools.call(conn, List.first(tools).name, %{})
 ```
 
 ---

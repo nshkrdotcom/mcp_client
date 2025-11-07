@@ -34,12 +34,12 @@ Without a clear architecture, we risk:
 
 ## Considered Options
 
-### Option 1: Single MCPClient module with namespaced functions
+### Option 1: Single McpClient module with namespaced functions
 
 ```elixir
-MCPClient.tools_list(conn)
-MCPClient.tools_call(conn, name, args)
-MCPClient.resources_read(conn, uri)
+McpClient.tools_list(conn)
+McpClient.tools_call(conn, name, args)
+McpClient.resources_read(conn, uri)
 ```
 
 **Pros:**
@@ -54,9 +54,9 @@ MCPClient.resources_read(conn, uri)
 ### Option 2: Separate feature modules with shared core
 
 ```elixir
-MCPClient.Tools.list(conn)
-MCPClient.Tools.call(conn, name, args)
-MCPClient.Resources.read(conn, uri)
+McpClient.Tools.list(conn)
+McpClient.Tools.call(conn, name, args)
+McpClient.Resources.read(conn, uri)
 ```
 
 **Pros:**
@@ -72,8 +72,8 @@ MCPClient.Resources.read(conn, uri)
 ### Option 3: Protocol-based polymorphism
 
 ```elixir
-MCPClient.list(conn, :tools)
-MCPClient.call(conn, :tools, %{name: "search", args: %{}})
+McpClient.list(conn, :tools)
+McpClient.call(conn, :tools, %{name: "search", args: %{}})
 ```
 
 **Pros:**
@@ -95,7 +95,7 @@ Chosen option: **Separate feature modules with shared core (Option 2)**, because
 3. **Extensible**: Easy to add new features without modifying existing modules
 4. **Type safety**: Each module can define feature-specific structs and validation
 5. **Testable**: Each feature module can be tested independently with mock connections
-6. **Discoverable**: `h MCPClient.Tools` shows all tool-related functions
+6. **Discoverable**: `h McpClient.Tools` shows all tool-related functions
 
 ### Implementation Structure
 
@@ -114,21 +114,23 @@ lib/
     error.ex                       # Error types
 
     # Client Features (post-MVP-core)
-    tools.ex                       # MCPClient.Tools
-    resources.ex                   # MCPClient.Resources
-    prompts.ex                     # MCPClient.Prompts
-    sampling.ex                    # MCPClient.Sampling
-    roots.ex                       # MCPClient.Roots
-    logging.ex                     # MCPClient.Logging
+    tools.ex                       # McpClient.Tools
+    resources.ex                   # McpClient.Resources
+    prompts.ex                     # McpClient.Prompts
+    sampling.ex                    # McpClient.Sampling
+    roots.ex                       # McpClient.Roots
+    logging.ex                     # McpClient.Logging
     notification_router.ex         # Server notification dispatcher
 ```
+
+`McpClient` itself only exposes lifecycle functions (start/stop/await state). We intentionally skip helper wrappers like `McpClient.list_tools/2` to keep the surface area tight until real users ask for them.
 
 ### API Design Pattern
 
 Each feature module follows this pattern:
 
 ```elixir
-defmodule MCPClient.Tools do
+defmodule McpClient.Tools do
   @moduledoc """
   Client API for MCP Tools feature.
 
@@ -136,15 +138,16 @@ defmodule MCPClient.Tools do
   by the client with validated arguments.
   """
 
-  alias MCPClient.Connection
-  alias MCPClient.Error
+  alias McpClient.Connection
+  alias McpClient.Error
 
   # List available tools
   @spec list(pid(), Keyword.t()) :: {:ok, [Tool.t()]} | {:error, Error.t()}
   def list(conn, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
-    with {:ok, result} <- Connection.call(conn, "tools/list", %{}, timeout),
+    with :ok <- ensure_capability(conn, :tools),
+         {:ok, result} <- Connection.call(conn, "tools/list", %{}, timeout),
          {:ok, tools} <- validate_tools_response(result) do
       {:ok, tools}
     else
@@ -159,11 +162,27 @@ defmodule MCPClient.Tools do
     timeout = Keyword.get(opts, :timeout, 30_000)
     params = %{name: name, arguments: arguments}
 
-    with {:ok, result} <- Connection.call(conn, "tools/call", params, timeout),
+    with :ok <- ensure_capability(conn, :tools),
+         {:ok, result} <- Connection.call(conn, "tools/call", params, timeout),
          {:ok, call_result} <- validate_call_response(result) do
       {:ok, call_result}
     else
       {:error, reason} -> {:error, Error.normalize(reason, :tools_call)}
+    end
+  end
+
+  defp ensure_capability(conn, capability) do
+    with {:ok, caps} <- Connection.server_capabilities(conn),
+         true <- Map.get(caps, capability, false) do
+      :ok
+    else
+      _ ->
+        {:error,
+         %Error{
+           type: :capability_not_supported,
+           message: "server does not advertise #{capability}",
+           details: %{capability: capability}
+         }}
     end
   end
 
@@ -201,7 +220,7 @@ end
 The core exposes exactly **3 functions** to feature modules:
 
 ```elixir
-defmodule MCPClient.Connection do
+defmodule McpClient.Connection do
   # Synchronous request with correlation
   @spec call(pid(), method :: String.t(), params :: map(), timeout()) ::
     {:ok, result :: map()} | {:error, term()}
@@ -235,7 +254,7 @@ end
 Server-initiated notifications require special handling:
 
 ```elixir
-defmodule MCPClient.NotificationRouter do
+defmodule McpClient.NotificationRouter do
   @moduledoc """
   Routes server-initiated notifications to typed callbacks.
 
@@ -277,10 +296,10 @@ end
 **User wiring:**
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"},
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"},
   notification_handler: fn notification ->
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:resources, :updated, params} ->
         MyApp.ResourceCache.invalidate(params["uri"])
 
@@ -301,7 +320,7 @@ end
 All feature modules normalize errors through a shared module:
 
 ```elixir
-defmodule MCPClient.Error do
+defmodule McpClient.Error do
   @moduledoc """
   Normalized error types for MCP operations.
   """
@@ -433,7 +452,7 @@ defp validate_tool(_), do: {:error, :invalid_tool_structure}
 ### Negative/Risks
 
 **Slightly more verbose:**
-- ❌ `MCPClient.Tools.list(conn)` vs `MCPClient.tools_list(conn)`
+- ❌ `McpClient.Tools.list(conn)` vs `McpClient.tools_list(conn)`
 - **Mitigation:** Standard in Elixir ecosystem, users expect this pattern
 
 **Notification routing requires wiring:**
@@ -452,7 +471,7 @@ defp validate_tool(_), do: {:error, :invalid_tool_structure}
 - Standard for full-featured libraries (acceptable)
 
 **TypedStruct dependency:**
-- Already in mix.exs for core, no new dependency
+- Declared as `{:typed_struct, "~> 0.3", runtime: false}` so production deployments do not carry the dependency
 
 ## Implementation Phases
 
@@ -462,39 +481,39 @@ defp validate_tool(_), do: {:error, :invalid_tool_structure}
 - Add integration tests with mock responses
 
 ### Phase 2: Error & Router Infrastructure
-- Implement `MCPClient.Error` with normalization
-- Implement `MCPClient.NotificationRouter`
+- Implement `McpClient.Error` with normalization
+- Implement `McpClient.NotificationRouter`
 - Add tests for error types and routing logic
 
 ### Phase 3: Feature Modules (Incremental)
 **Can be done in any order, ship incrementally:**
 
-1. **MCPClient.Tools** (highest priority - most common use case)
+1. **McpClient.Tools** (highest priority - most common use case)
    - `list/2`, `call/4`
    - `Tool` and `CallResult` structs
 
-2. **MCPClient.Resources** (common for file/data access)
+2. **McpClient.Resources** (common for file/data access)
    - `list/2`, `read/3`, `subscribe/3`, `unsubscribe/3`, `list_templates/2`
    - `Resource`, `ResourceContents`, `ResourceTemplate` structs
 
-3. **MCPClient.Prompts** (LLM interaction)
+3. **McpClient.Prompts** (LLM interaction)
    - `list/2`, `get/3`
    - `Prompt`, `PromptMessage` structs
 
-4. **MCPClient.Sampling** (LLM completions)
+4. **McpClient.Sampling** (LLM completions)
    - `create_message/3`
    - `SamplingRequest`, `SamplingResult` structs
 
-5. **MCPClient.Roots** (workspace boundaries)
+5. **McpClient.Roots** (workspace boundaries)
    - `list/2`
    - `Root` struct
 
-6. **MCPClient.Logging** (server logs)
+6. **McpClient.Logging** (server logs)
    - `set_level/3`
    - Handle `notifications/message` via router
 
 ### Phase 4: Integration & Documentation
-- Update `MCPClient` main module with feature links
+- Update `McpClient` main module with feature links
 - Add usage examples for each feature
 - Add integration tests with real MCP servers
 - Update README with feature showcase
@@ -528,36 +547,36 @@ defp validate_tool(_), do: {:error, :invalid_tool_structure}
 
 ```elixir
 # Start connection
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio,
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio,
               cmd: "uvx",
               args: ["mcp-server-sqlite", "--db-path", "test.db"]}
 )
 
 # List available tools
-{:ok, tools} = MCPClient.Tools.list(conn)
-# [%MCPClient.Tools.Tool{name: "read_query", description: "Execute SELECT", ...}]
+{:ok, tools} = McpClient.Tools.list(conn)
+# [%McpClient.Tools.Tool{name: "read_query", description: "Execute SELECT", ...}]
 
 # Call a tool
-{:ok, result} = MCPClient.Tools.call(conn, "read_query", %{
+{:ok, result} = McpClient.Tools.call(conn, "read_query", %{
   query: "SELECT * FROM users LIMIT 10"
 })
-# %MCPClient.Tools.CallResult{content: [...], isError: false}
+# %McpClient.Tools.CallResult{content: [...], isError: false}
 
 # Read a resource
-{:ok, contents} = MCPClient.Resources.read(conn, "file:///path/to/file.txt")
+{:ok, contents} = McpClient.Resources.read(conn, "file:///path/to/file.txt")
 
 # Subscribe to resource updates
-:ok = MCPClient.Resources.subscribe(conn, "file:///path/to/file.txt")
+:ok = McpClient.Resources.subscribe(conn, "file:///path/to/file.txt")
 ```
 
 ### With Notification Handling
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"},
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"},
   notification_handler: fn notification ->
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:resources, :updated, %{"uri" => uri}} ->
         Logger.info("Resource updated: #{uri}")
         MyApp.handle_resource_change(uri)
@@ -575,18 +594,18 @@ defp validate_tool(_), do: {:error, :invalid_tool_structure}
 ### Error Handling
 
 ```elixir
-case MCPClient.Tools.call(conn, "nonexistent_tool", %{}) do
+case McpClient.Tools.call(conn, "nonexistent_tool", %{}) do
   {:ok, result} ->
     process_result(result)
 
-  {:error, %MCPClient.Error{type: :method_not_found, message: msg}} ->
+  {:error, %McpClient.Error{type: :method_not_found, message: msg}} ->
     Logger.warn("Tool not found: #{msg}")
 
-  {:error, %MCPClient.Error{type: :timeout}} ->
+  {:error, %McpClient.Error{type: :timeout}} ->
     Logger.error("Tool call timed out")
     retry_or_fail()
 
-  {:error, %MCPClient.Error{} = error} ->
+  {:error, %McpClient.Error{} = error} ->
     Logger.error("Tool call failed: #{inspect(error)}")
 end
 ```
@@ -611,7 +630,7 @@ Feature architecture is correct if:
 2. ✅ Core modules never import/alias feature modules (one-way dependency)
 3. ✅ Each feature can be tested with a mock connection (no real transport needed)
 4. ✅ Adding new features requires no changes to core
-5. ✅ All errors are normalized through `MCPClient.Error`
+5. ✅ All errors are normalized through `McpClient.Error`
 6. ✅ Notification routing works without modifying core
 7. ✅ API feels natural to Elixir developers (positive user feedback)
 

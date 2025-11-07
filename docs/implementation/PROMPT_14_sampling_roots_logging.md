@@ -6,7 +6,7 @@
 
 ---
 
-## 1. MCPClient.Sampling
+## 1. McpClient.Sampling
 
 **File:** `lib/mcp_client/sampling.ex`
 
@@ -18,7 +18,7 @@
 
 ---
 
-## 2. MCPClient.Roots
+## 2. McpClient.Roots
 
 **File:** `lib/mcp_client/roots.ex`
 
@@ -30,7 +30,7 @@
 
 ---
 
-## 3. MCPClient.Logging
+## 3. McpClient.Logging
 
 **File:** `lib/mcp_client/logging.ex`
 

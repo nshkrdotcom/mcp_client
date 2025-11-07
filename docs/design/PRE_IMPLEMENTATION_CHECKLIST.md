@@ -22,8 +22,8 @@ data = data
 **Locations to check:**
 - `:ready` + `transport_down` ✅
 - `:ready` + oversized frame ✅
-- `:ready` + reset notification ✅
 - `:initializing` + any failure → uses tombstone logic differently (no requests yet)
+- (Reset notifications were removed from MVP; no special path required)
 
 ### 2. Test Setup
 
@@ -61,7 +61,7 @@ property "stop during retry never causes double reply" do
     McpClient.stop(client)
 
     # Task receives exactly one reply (shutdown error)
-    assert {:error, %Error{kind: :shutdown}} = Task.await(task)
+    assert {:error, %Error{type: :shutdown}} = Task.await(task)
 
     # No second message in mailbox
     refute_received _
@@ -97,7 +97,7 @@ test "exhausted retries return backpressure" do
   # Mock transport: always :busy
   mock_transport_always_busy()
 
-  assert {:error, %Error{kind: :transport, message: msg}} =
+  assert {:error, %Error{type: :transport, message: msg}} =
     McpClient.call_tool(client, "op", %{})
 
   assert msg =~ "busy after 3 attempts"
@@ -123,8 +123,8 @@ test "transport down fails and clears both requests and retries" do
   send(connection, {:transport, :down, :normal})
 
   # Both tasks receive transport error
-  assert {:error, %Error{kind: :transport}} = Task.await(task1)
-  assert {:error, %Error{kind: :transport}} = Task.await(task2)
+  assert {:error, %Error{type: :transport}} = Task.await(task1)
+  assert {:error, %Error{type: :transport}} = Task.await(task2)
 
   # Connection transitions to backoff
   assert :backoff = McpClient.state(client)
@@ -206,7 +206,7 @@ test "stop during retry prevents double reply" do
   assert :ok = McpClient.stop(client)
 
   # Task receives shutdown error (not backpressure)
-  assert {:error, %Error{kind: :shutdown}} = Task.await(task)
+  assert {:error, %Error{type: :shutdown}} = Task.await(task)
 
   # No second message arrives
   refute_receive _, 100

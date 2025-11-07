@@ -64,8 +64,8 @@ test "transport down fails and clears both requests and retries" do
   send(connection, {:transport, :down, :normal})
 
   # Both tasks receive transport error
-  assert {:error, %Error{kind: :transport}} = Task.await(task1)
-  assert {:error, %Error{kind: :transport}} = Task.await(task2)
+  assert {:error, %Error{type: :transport}} = Task.await(task1)
+  assert {:error, %Error{type: :transport}} = Task.await(task2)
 end
 ```
 
@@ -110,7 +110,7 @@ test "stop during retry prevents double reply" do
   assert :ok = McpClient.stop(client)
 
   # Task receives shutdown error (not backpressure)
-  assert {:error, %Error{kind: :shutdown}} = Task.await(task)
+  assert {:error, %Error{type: :shutdown}} = Task.await(task)
 
   # No second message arrives
   refute_receive _, 100
@@ -294,7 +294,7 @@ defmodule McpClient.IntegrationTest do
 
       result = McpClient.call_tool(client, "op", %{})
 
-      assert {:error, %Error{kind: :transport, message: msg}} = result
+      assert {:error, %Error{type: :transport, message: msg}} = result
       assert msg =~ "busy after 3 attempts"
     end
   end
@@ -328,8 +328,8 @@ defmodule McpClient.IntegrationTest do
       send(connection, {:transport, :down, :test_failure})
 
       # Both should receive transport error
-      assert {:error, %Error{kind: :transport}} = Task.await(task1)
-      assert {:error, %Error{kind: :transport}} = Task.await(task2)
+      assert {:error, %Error{type: :transport}} = Task.await(task1)
+      assert {:error, %Error{type: :transport}} = Task.await(task2)
     end
   end
 
@@ -375,7 +375,7 @@ defmodule McpClient.IntegrationTest do
       assert :ok = McpClient.stop(client)
 
       # Task should receive shutdown error
-      assert {:error, %Error{kind: :shutdown}} = Task.await(task)
+      assert {:error, %Error{type: :shutdown}} = Task.await(task)
 
       # No second message
       refute_receive _, 100
@@ -470,7 +470,7 @@ defmodule McpClient.IntegrationTest do
       }
       send(connection, {:transport, :frame, Jason.encode!(response)})
 
-      assert {:error, %Error{kind: :server, message: "Method not found"}} =
+      assert {:error, %Error{type: :server, message: "Method not found"}} =
         Task.await(task)
     end
 
@@ -483,7 +483,7 @@ defmodule McpClient.IntegrationTest do
       end)
 
       # Don't send response - let it timeout
-      assert {:error, %Error{kind: :timeout}} = Task.await(task, 200)
+      assert {:error, %Error{type: :timeout}} = Task.await(task, 200)
     end
   end
 
@@ -497,7 +497,7 @@ defmodule McpClient.IntegrationTest do
       end)
 
       # Let it timeout
-      assert {:error, %Error{kind: :timeout}} = Task.await(task)
+      assert {:error, %Error{type: :timeout}} = Task.await(task)
 
       # Send late response
       response = %{

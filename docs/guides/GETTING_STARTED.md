@@ -30,9 +30,9 @@ mix deps.get
 
 ```elixir
 # Connect to a local MCP server via stdio
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.Stdio,
+    McpClient.Transports.Stdio,
     cmd: "uvx",
     args: ["mcp-server-sqlite", "--db-path", "./test.db"]
   }
@@ -42,7 +42,7 @@ mix deps.get
 ### 2. List Available Tools
 
 ```elixir
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 
 Enum.each(tools, fn tool ->
   IO.puts("Tool: #{tool.name} - #{tool.description}")
@@ -52,7 +52,7 @@ end)
 ### 3. Call a Tool
 
 ```elixir
-{:ok, result} = MCPClient.Tools.call(conn, "read_query", %{
+{:ok, result} = McpClient.Tools.call(conn, "read_query", %{
   query: "SELECT * FROM users LIMIT 10"
 })
 
@@ -64,7 +64,7 @@ end)
 ### 4. Clean Up
 
 ```elixir
-MCPClient.stop(conn)
+McpClient.stop(conn)
 ```
 
 ---
@@ -90,17 +90,17 @@ Transports handle the physical communication layer:
 
 **Stdio** (local processes):
 ```elixir
-{MCPClient.Transports.Stdio, cmd: "python", args: ["server.py"]}
+{McpClient.Transports.Stdio, cmd: "python", args: ["server.py"]}
 ```
 
 **SSE** (server-sent events, receive only):
 ```elixir
-{MCPClient.Transports.SSE, url: "https://api.example.com/sse"}
+{McpClient.Transports.SSE, url: "https://api.example.com/sse"}
 ```
 
 **HTTP+SSE** (bidirectional, cloud servers):
 ```elixir
-{MCPClient.Transports.HTTP,
+{McpClient.Transports.HTTP,
  base_url: "https://api.example.com",
  headers: [{"authorization", "Bearer #{token}"}]}
 ```
@@ -109,21 +109,21 @@ Transports handle the physical communication layer:
 
 **Tools** - Executable functions exposed by server:
 ```elixir
-MCPClient.Tools.list(conn)
-MCPClient.Tools.call(conn, "tool_name", %{arg: "value"})
+McpClient.Tools.list(conn)
+McpClient.Tools.call(conn, "tool_name", %{arg: "value"})
 ```
 
 **Resources** - Data sources (files, URLs, database queries):
 ```elixir
-MCPClient.Resources.list(conn)
-MCPClient.Resources.read(conn, "file:///path/to/file")
-MCPClient.Resources.subscribe(conn, "file:///watched/file")
+McpClient.Resources.list(conn)
+McpClient.Resources.read(conn, "file:///path/to/file")
+McpClient.Resources.subscribe(conn, "file:///watched/file")
 ```
 
 **Prompts** - LLM prompt templates:
 ```elixir
-MCPClient.Prompts.list(conn)
-MCPClient.Prompts.get(conn, "prompt_name", %{arg: "value"})
+McpClient.Prompts.list(conn)
+McpClient.Prompts.get(conn, "prompt_name", %{arg: "value"})
 ```
 
 ---
@@ -138,17 +138,17 @@ Load tool definitions into model context, model calls tools directly:
 
 ```elixir
 # 1. List all tools (definitions go into model context)
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 # Model sees: 150K tokens of tool definitions
 
 # 2. Model decides to call a tool
-{:ok, result} = MCPClient.Tools.call(conn, "google_drive__get_document", %{
+{:ok, result} = McpClient.Tools.call(conn, "google_drive__get_document", %{
   documentId: "abc123"
 })
 # Model sees: 50K tokens of document content
 
 # 3. Model decides to call another tool
-{:ok, _} = MCPClient.Tools.call(conn, "salesforce__update_record", %{...})
+{:ok, _} = McpClient.Tools.call(conn, "salesforce__update_record", %{...})
 ```
 
 **When to use:**
@@ -201,7 +201,7 @@ IO.puts("Done")
 ```elixir
 defmodule MCPServers.GoogleDrive do
   def get_document(conn, document_id) do
-    MCPClient.Connection.call(conn, "google_drive__get_document", %{
+    McpClient.Connection.call(conn, "google_drive__get_document", %{
       documentId: document_id
     })
   end
@@ -228,9 +228,9 @@ defmodule MyApp.Application do
 
   def start(_type, _args) do
     children = [
-      {MCPClient,
+      {McpClient,
        name: MyApp.MCPConnection,
-       transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"}}
+       transport: {McpClient.Transports.Stdio, cmd: "mcp-server"}}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)
@@ -242,16 +242,16 @@ Access the connection:
 
 ```elixir
 conn = Process.whereis(MyApp.MCPConnection)
-MCPClient.Tools.list(conn)
+McpClient.Tools.list(conn)
 ```
 
 ### Handling Notifications
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: fn notification ->
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:resources, :updated, %{"uri" => uri}} ->
         Logger.info("Resource updated: #{uri}")
         MyApp.ResourceCache.invalidate(uri)
@@ -271,21 +271,21 @@ MCPClient.Tools.list(conn)
 
 ### Error Handling
 
-All operations return `{:ok, result} | {:error, %MCPClient.Error{}}`:
+All operations return `{:ok, result} | {:error, %McpClient.Error{}}`:
 
 ```elixir
-case MCPClient.Tools.call(conn, "search", %{query: "test"}) do
+case McpClient.Tools.call(conn, "search", %{query: "test"}) do
   {:ok, result} ->
     process_result(result)
 
-  {:error, %MCPClient.Error{type: :timeout}} ->
+  {:error, %McpClient.Error{type: :timeout}} ->
     Logger.warn("Tool call timed out, retrying...")
     retry_with_backoff()
 
-  {:error, %MCPClient.Error{type: :tool_not_found}} ->
+  {:error, %McpClient.Error{type: :tool_not_found}} ->
     Logger.error("Tool does not exist")
 
-  {:error, %MCPClient.Error{type: :connection_closed}} ->
+  {:error, %McpClient.Error{type: :connection_closed}} ->
     Logger.error("Connection lost, will reconnect automatically")
 
   {:error, error} ->
@@ -296,8 +296,8 @@ end
 ### Configuration
 
 ```elixir
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"},
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"},
   request_timeout: 30_000,      # 30 seconds per request
   init_timeout: 10_000,          # 10 seconds for initialize
   backoff_min: 1_000,            # Min reconnect delay
@@ -317,40 +317,40 @@ See [Configuration Guide](CONFIGURATION.md) for all options.
 
 ```elixir
 # Connect to filesystem server
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio,
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio,
               cmd: "uvx",
               args: ["mcp-server-filesystem", "/path/to/root"]}
 )
 
 # List files
-{:ok, resources} = MCPClient.Resources.list(conn)
+{:ok, resources} = McpClient.Resources.list(conn)
 
 # Read file
 file = Enum.find(resources, & &1.name == "README.md")
-{:ok, contents} = MCPClient.Resources.read(conn, file.uri)
+{:ok, contents} = McpClient.Resources.read(conn, file.uri)
 
 IO.puts(List.first(contents.contents)["text"])
 
 # Watch for changes
-:ok = MCPClient.Resources.subscribe(conn, file.uri)
+:ok = McpClient.Resources.subscribe(conn, file.uri)
 ```
 
 ### Database Queries
 
 ```elixir
 # Connect to SQLite server
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio,
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio,
               cmd: "uvx",
               args: ["mcp-server-sqlite", "--db-path", "./app.db"]}
 )
 
 # List available tools
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 
 # Execute query
-{:ok, result} = MCPClient.Tools.call(conn, "read_query", %{
+{:ok, result} = McpClient.Tools.call(conn, "read_query", %{
   query: "SELECT * FROM users WHERE created_at > date('now', '-7 days')"
 })
 
@@ -364,15 +364,15 @@ result.content
 
 ```elixir
 # Server that provides prompt templates
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-prompt-server"}
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-prompt-server"}
 )
 
 # List prompts
-{:ok, prompts} = MCPClient.Prompts.list(conn)
+{:ok, prompts} = McpClient.Prompts.list(conn)
 
 # Get prompt with arguments
-{:ok, prompt_result} = MCPClient.Prompts.get(conn, "summarize", %{
+{:ok, prompt_result} = McpClient.Prompts.get(conn, "summarize", %{
   text: "Long document text...",
   max_length: 200
 })
@@ -388,9 +388,9 @@ messages = prompt_result.messages
 
 ```elixir
 # OAuth 2.1 authenticated connection
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {
-    MCPClient.Transports.HTTP,
+    McpClient.Transports.HTTP,
     base_url: "https://mcp.example.com",
     oauth: %{
       client_id: System.get_env("MCP_CLIENT_ID"),
@@ -402,7 +402,7 @@ messages = prompt_result.messages
 )
 
 # Use exactly like local servers
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 ```
 
 ---
@@ -439,14 +439,14 @@ Test with real servers:
 ```elixir
 @moduletag :integration
 test "lists tools from real server" do
-  {:ok, conn} = MCPClient.start_link(
-    transport: {MCPClient.Transports.Stdio, cmd: "mcp-test-server"}
+  {:ok, conn} = McpClient.start_link(
+    transport: {McpClient.Transports.Stdio, cmd: "mcp-test-server"}
   )
 
-  assert {:ok, tools} = MCPClient.Tools.list(conn)
+  assert {:ok, tools} = McpClient.Tools.list(conn)
   assert length(tools) > 0
 
-  MCPClient.stop(conn)
+  McpClient.stop(conn)
 end
 ```
 
@@ -478,7 +478,7 @@ end
 **Issue:** `{:error, %Error{type: :method_not_found}}`
 
 **Solutions:**
-- Check server capabilities: `MCPClient.server_capabilities(conn)`
+- Check server capabilities: `McpClient.server_capabilities(conn)`
 - Verify feature is supported by server
 - Check MCP server documentation
 

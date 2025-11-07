@@ -2,6 +2,8 @@
 
 **Goal:** Implement :ready state request handling, response routing, request timeouts, and basic notifications.
 
+> **Update (2025-11-07):** Replace any per-request `:state_timeout` actions with `:erlang.send_after/3` messages (`{:req_timeout, id}`), and keep calls synchronous (store `from`; do **not** reply `{:ok, id}` immediately). Treat the remainder of this prompt as historical context where it conflicts with ADR-0003/ADR-0007.
+
 **Test Strategy:** TDD with rgr. All tests green, no warnings.
 
 ---

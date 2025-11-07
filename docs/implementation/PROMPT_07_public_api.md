@@ -83,7 +83,7 @@ From MVP_SPEC.md and ADRs:
 **Errors (from ADR-0009 and MVP_SPEC.md):**
 ```elixir
 {:error, %McpClient.Error{
-  kind: :transport | :timeout | :unavailable | :shutdown | :server,
+  type: :transport | :timeout | :unavailable | :shutdown | :server,
   message: String.t(),
   details: map()
 }}
@@ -102,7 +102,7 @@ defmodule McpClient.Error do
   @moduledoc """
   Error struct for MCP client operations.
 
-  ## Error Kinds
+  ## Error Types
 
   - `:transport` - Transport-level failure (connection down, send failed)
   - `:timeout` - Request timeout
@@ -113,12 +113,12 @@ defmodule McpClient.Error do
   """
 
   @type t :: %__MODULE__{
-    kind: :transport | :timeout | :unavailable | :shutdown | :server | :protocol,
+    type: :transport | :timeout | :unavailable | :shutdown | :server | :protocol,
     message: String.t(),
     details: map()
   }
 
-  defstruct [:kind, :message, details: %{}]
+defstruct [:type, :message, details: %{}]
 end
 ```
 
@@ -367,16 +367,16 @@ defmodule McpClient do
   defp normalize_error(%{"code" => code, "message" => message}) do
     # JSON-RPC error from server
     %Error{
-      kind: :server,
+      type: :server,
       message: message,
       details: %{code: code}
     }
   end
 
-  defp normalize_error(%{kind: kind, message: message} = map) do
+  defp normalize_error(%{type: type, message: message} = map) do
     # Error from Connection (already structured)
     %Error{
-      kind: kind,
+      type: type,
       message: message,
       details: Map.get(map, :details, %{})
     }
@@ -385,7 +385,7 @@ defmodule McpClient do
   defp normalize_error(other) do
     # Unknown error shape
     %Error{
-      kind: :protocol,
+      type: :protocol,
       message: "Unexpected error: #{inspect(other)}",
       details: %{raw: other}
     }
@@ -417,7 +417,7 @@ defp request(client, method, params, opts) do
       receive do
         {^ref, response} -> normalize_response(response)
       after
-        timeout -> {:error, %Error{kind: :timeout, message: "Request timeout"}}
+        timeout -> {:error, %Error{type: :timeout, message: "Request timeout"}}
       end
 
     {:error, error} ->
@@ -534,17 +534,17 @@ defmodule McpClientTest do
       normalized = normalize_error(error)
 
       assert %McpClient.Error{
-        kind: :server,
+        type: :server,
         message: "Method not found",
         details: %{code: -32601}
       } = normalized
     end
 
     test "normalizes transport errors" do
-      error = %{kind: :transport, message: "Connection lost"}
+      error = %{type: :transport, message: "Connection lost"}
       normalized = normalize_error(error)
 
-      assert %McpClient.Error{kind: :transport} = normalized
+      assert %McpClient.Error{type: :transport} = normalized
     end
   end
 

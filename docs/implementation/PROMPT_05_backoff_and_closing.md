@@ -33,7 +33,7 @@ From STATE_TRANSITIONS.md, these are the exact transitions to implement:
 
 | From | Event | Guard | Actions | To |
 |------|-------|-------|---------|-----|
-| :closing | `{:state_timeout, {:retry_send, _}}` | - | Ignore (retries cleared) | :closing |
+| :closing | `{:info, {:retry_send, _}}` | - | Ignore (retries cleared) | :closing |
 | :closing | `{:state_timeout, {:request_timeout, _}}` | - | Ignore (requests cleared) | :closing |
 | :closing | `{:state_timeout, :tombstone_sweep}` | - | Ignore (shutting down) | :closing |
 | :closing | `{:call, from}, _` | - | Reply with shutdown error | :closing |
@@ -96,7 +96,7 @@ end
 **Backoff error for requests in :backoff:**
 ```elixir
 %{
-  kind: :unavailable,
+  type: :unavailable,
   message: "Connection in backoff, retry in #{data.backoff_delay}ms"
 }
 ```
@@ -104,7 +104,7 @@ end
 **Shutdown error in :closing:**
 ```elixir
 %{
-  kind: :shutdown,
+  type: :shutdown,
   message: "Connection is shutting down"
 }
 ```
@@ -135,7 +135,7 @@ end
 ```elixir
 def handle_event({:call, from}, {:request, _method, _params, _opts}, :backoff, data) do
   error = %{
-    kind: :unavailable,
+    type: :unavailable,
     message: "Connection in backoff, retry in #{data.backoff_delay}ms",
     details: %{backoff_delay_ms: data.backoff_delay}
   }
@@ -202,7 +202,7 @@ end
 
 ```elixir
 # Ignore retry timers (already handled in Prompt 04)
-def handle_event(:state_timeout, {:retry_send, _id}, :closing, _data) do
+def handle_event(:info, {:retry_send, _id}, :closing, _data) do
   {:keep_state_and_data, []}
 end
 
@@ -219,7 +219,7 @@ end
 # Reject new calls
 def handle_event({:call, from}, _event, :closing, _data) do
   error = %{
-    kind: :shutdown,
+    type: :shutdown,
     message: "Connection is shutting down"
   }
   {:keep_state_and_data, [{:reply, from, {:error, error}}]}
@@ -292,7 +292,7 @@ describe ":backoff state" do
   test "rejects requests with backoff error", %{connection: conn} do
     result = :gen_statem.call(conn, {:request, "test", %{}, []})
 
-    assert {:error, %{kind: :unavailable, message: msg}} = result
+    assert {:error, %{type: :unavailable, message: msg}} = result
     assert msg =~ "backoff"
   end
 
@@ -346,7 +346,7 @@ describe ":closing state" do
     # Try to make request (if connection still alive briefly)
     if Process.alive?(pid) do
       result = :gen_statem.call(pid, {:request, "test", %{}, []})
-      assert {:error, %{kind: :shutdown}} = result
+      assert {:error, %{type: :shutdown}} = result
     end
   end
 

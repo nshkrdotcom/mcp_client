@@ -83,7 +83,7 @@ def handle_event({:call, from}, :stop, :ready, data) do
 
   # Fail all in-flight requests
   shutdown_error = %Error{
-    kind: :shutdown,
+    type: :shutdown,
     message: "client shutting down",
     code: nil
   }
@@ -129,12 +129,12 @@ def handle_event({:call, from}, :stop, :closing, data) do
 end
 
 # Ignore retry timers that fire after entering :closing
-def handle_event(:state_timeout, {:retry_send, _id}, :closing, data) do
+def handle_event(:info, {:retry_send, _id, _frame}, :closing, data) do
   {:keep_state, data}  # Drop silently
 end
 
 # Ignore request timeouts that fire after entering :closing
-def handle_event(:state_timeout, {:request_timeout, _id}, :closing, data) do
+def handle_event(:info, {:req_timeout, _id}, :closing, data) do
   {:keep_state, data}  # Drop silently
 end
 ```
@@ -203,7 +203,7 @@ McpClient.stop(client)
 
 # First process receives
 {:error, %McpClient.Error{
-  kind: :shutdown,
+  type: :shutdown,
   message: "client shutting down"
 }}
 ```
@@ -308,7 +308,7 @@ test "stop fails in-flight requests" do
   assert :ok = McpClient.stop(client)
 
   # Task receives shutdown error
-  assert {:error, %Error{kind: :shutdown}} = Task.await(task)
+  assert {:error, %Error{type: :shutdown}} = Task.await(task)
 end
 ```
 

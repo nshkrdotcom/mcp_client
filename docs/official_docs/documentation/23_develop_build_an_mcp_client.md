@@ -105,7 +105,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
 
     load_dotenv()  # load environment variables from .env
 
-    class MCPClient:
+    class McpClient:
         def __init__(self):
             # Initialize session and client objects
             self.session: Optional[ClientSession] = None
@@ -261,7 +261,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
             print("Usage: python client.py <path_to_server_script>")
             sys.exit(1)
 
-        client = MCPClient()
+        client = McpClient()
         try:
             await client.connect_to_server(sys.argv[1])
             await client.chat_loop()
@@ -279,7 +279,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
 
     ### 1. Client Initialization
 
-    * The `MCPClient` class initializes with session management and API clients
+    * The `McpClient` class initializes with session management and API clients
     * Uses `AsyncExitStack` for proper resource management
     * Configures the Anthropic client for Claude interactions
 
@@ -560,7 +560,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
       throw new Error("ANTHROPIC_API_KEY is not set");
     }
 
-    class MCPClient {
+    class McpClient {
       private mcp: Client;
       private anthropic: Anthropic;
       private transport: StdioClientTransport | null = null;
@@ -720,7 +720,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
         console.log("Usage: node index.ts <path_to_server_script>");
         return;
       }
-      const mcpClient = new MCPClient();
+      const mcpClient = new McpClient();
       try {
         await mcpClient.connectToServer(process.argv[2]);
         await mcpClient.chatLoop();
@@ -1118,7 +1118,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
     First, let's create the basic client class:
 
     ```kotlin  theme={null}
-    class MCPClient : AutoCloseable {
+    class McpClient : AutoCloseable {
         private val anthropic = AnthropicOkHttpClient.fromEnv()
         private val mcp: Client = Client(clientInfo = Implementation(name = "mcp-client-cli", version = "1.0.0"))
         private lateinit var tools: List<ToolUnion>
@@ -1287,7 +1287,7 @@ Before you begin, it helps to have gone through our [Build an MCP Server](/docs/
     fun main(args: Array<String>) = runBlocking {
         if (args.isEmpty()) throw IllegalArgumentException("Usage: java -jar <your_path>/build/libs/kotlin-mcp-client-0.1.0-all.jar <path_to_server_script>")
         val serverPath = args.first()
-        val client = MCPClient()
+        val client = McpClient()
         client.use {
             client.connectToServer(serverPath)
             client.chatLoop()

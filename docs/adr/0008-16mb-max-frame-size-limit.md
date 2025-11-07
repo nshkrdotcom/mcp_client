@@ -253,7 +253,7 @@ test "in-flight requests fail when oversized frame closes connection" do
   # Server sends oversized frame
   send_oversized_frame(server)
 
-  assert {:error, %Error{kind: :transport}} = Task.await(task)
+  assert {:error, %Error{type: :transport}} = Task.await(task)
 end
 ```
 

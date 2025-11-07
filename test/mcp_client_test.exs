@@ -1,8 +1,8 @@
-defmodule MCPClientTest do
+defmodule McpClientTest do
   use ExUnit.Case
-  doctest MCPClient
+  doctest McpClient
 
   test "greets the world" do
-    assert MCPClient.hello() == :world
+    assert McpClient.hello() == :world
   end
 end

@@ -1,6 +1,6 @@
 # PROMPT_12: Resources Feature Module
 
-**Goal:** Implement `MCPClient.Resources` for reading/subscribing to server resources.
+**Goal:** Implement `McpClient.Resources` for reading/subscribing to server resources.
 
 **Duration:** ~45 minutes | **Dependencies:** PROMPT_01-10
 
@@ -22,7 +22,7 @@
 - `ResourceContents` - {contents, uri}
 - `ResourceTemplate` - {uriTemplate, name, description, mimeType}
 
-**Reference:** CLIENT_FEATURES.md § MCPClient.Resources, PROTOCOL_DETAILS.md § resources/*
+**Reference:** CLIENT_FEATURES.md § McpClient.Resources, PROTOCOL_DETAILS.md § resources/*
 
 ---
 

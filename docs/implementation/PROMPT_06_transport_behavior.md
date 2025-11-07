@@ -152,20 +152,23 @@ end
 
 **File: `lib/mcp_client/transports/stdio.ex`**
 
+> **Note:** The code skeleton below still shows the earlier line-delimited implementation. Use it for structural guidance only and wire up the `Content-Length` framing described above when you write the actual module.
+
 ```elixir
 defmodule McpClient.Transports.Stdio do
   @moduledoc """
   Stdio transport implementation using Erlang Port.
 
   Spawns a subprocess and communicates via stdin/stdout using JSON-RPC
-  frames delimited by newlines.
+  frames with standard `Content-Length` headers (same framing as LSP).
 
   ## Frame Delimiting
 
-  MCP over stdio uses newline-delimited JSON (NDJSON):
-  - Each frame is a complete JSON-RPC message
-  - Frames are separated by '\n'
-  - No framing bytes or length prefixes
+  MCP over stdio uses `Content-Length` framing:
+  - Reader accumulates header lines until `\r\n\r\n`
+  - Parse `Content-Length: <bytes>` (reject > max_frame_bytes before allocating)
+  - Read exactly `<bytes>` body bytes
+  - Deliver one frame as soon as body is read, then pause again
 
   ## Backpressure
 
@@ -624,7 +627,7 @@ mix test test/mcp_client/transports/stdio_test.exs
 - **DO NOT** implement SSE or HTTP transports yet (post-MVP)
 - **DO NOT** add features beyond spec
 - Use exact message shapes: `{:transport, :up}`, etc.
-- Port mode: `{:line, 1024 * 1024}` for newline-delimited frames
+- Port runs in binary passive mode; we implement `Content-Length` framing ourselves
 - No buffering beyond one frame in queue (MVP)
 
 ---
@@ -640,17 +643,17 @@ We use `Port.open/2` with `GenServer` wrapper:
 
 ### Frame Delimiting
 
-MCP over stdio uses newline-delimited JSON (NDJSON):
-- Send: append `\n` to frame
-- Receive: Port with `{:line, N}` splits on newlines automatically
+MCP over stdio uses `Content-Length` headers:
+- **Send:** prepend `["Content-Length: ", byte_size(frame), "\r\n\r\n"]` before JSON payload
+- **Receive:** accumulate header bytes until `\r\n\r\n`, parse integer length, enforce `<= max_frame_bytes`, then read exactly that many body bytes
+- Reject declared sizes over 16MB before allocating binaries
 
 ### Backpressure Implementation
 
 1. Port delivers data to GenServer mailbox
-2. GenServer queues complete frames
-3. Only when `active: :once`, deliver first frame to Connection
-4. Auto-set `active: false` after delivery
-5. Connection calls `set_active(:once)` for next frame
+2. While paused we keep at most header bytes in `buffer`; body bytes are read **only** after Connection re-arms `set_active(:once)`
+3. GenServer queues at most one complete frame; after delivery it auto-pauses (sets `active: false`)
+4. Connection calls `set_active(:once)` for the next frame; helper `set_active_once_safe/1` prevents late activation during shutdown
 
 **Queue size**: MVP uses unbounded list. Post-MVP could add max queue size and return `:busy` on send.
 

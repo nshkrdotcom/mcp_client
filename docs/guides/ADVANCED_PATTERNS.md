@@ -29,16 +29,16 @@ MCP Client supports two fundamentally different usage patterns. Choosing the rig
 
 ```elixir
 # Connect to MCP server
-{:ok, conn} = MCPClient.start_link(
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"}
+{:ok, conn} = McpClient.start_link(
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"}
 )
 
 # Load all tools (into context)
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 # => 100 tools × 150 tokens/tool = 15K tokens
 
 # Call tools directly (results through context)
-{:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "test"})
+{:ok, result} = McpClient.Tools.call(conn, "search", %{query: "test"})
 # => Result flows through model context
 ```
 
@@ -147,7 +147,7 @@ defmodule MCPServers.GoogleDrive.GetDocument do
   """
 
   def call(conn, document_id) do
-    MCPClient.Connection.call(
+    McpClient.Connection.call(
       conn,
       "google_drive__get_document",
       %{documentId: document_id}
@@ -189,10 +189,10 @@ doc = File.read!("lib/mcp_servers/google_drive/get_document.ex")
 
 ```elixir
 # Search for relevant tools
-{:ok, tools} = MCPClient.Tools.search(conn, "salesforce update", detail: :name_only)
+{:ok, tools} = McpClient.Tools.search(conn, "salesforce update", detail: :name_only)
 # => ["salesforce__update_record", "salesforce__update_lead"]  (100 tokens)
 
-{:ok, tools} = MCPClient.Tools.search(conn, "salesforce update", detail: :full)
+{:ok, tools} = McpClient.Tools.search(conn, "salesforce update", detail: :full)
 # => [%Tool{name: "...", inputSchema: {...}}]  (2K tokens)
 
 # Detail levels:
@@ -209,7 +209,7 @@ Filter large datasets before they reach the model:
 
 ```elixir
 # Without code execution - all 10K rows in context
-{:ok, sheet} = MCPClient.Resources.read(conn, "sheet://abc123")
+{:ok, sheet} = McpClient.Resources.read(conn, "sheet://abc123")
 # => 10K rows × 50 tokens = 500K tokens in context
 
 # With code execution - filter before context
@@ -305,8 +305,8 @@ Skills.ExportSheetToCsv.run(conn, "xyz789", "report.csv")
 **Start with direct tool calls:**
 ```elixir
 # MVP: Simple and works
-{:ok, tools} = MCPClient.Tools.list(conn)
-{:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "test"})
+{:ok, tools} = McpClient.Tools.list(conn)
+{:ok, result} = McpClient.Tools.call(conn, "search", %{query: "test"})
 ```
 
 **Migrate to code execution when:**
@@ -318,7 +318,7 @@ Skills.ExportSheetToCsv.run(conn, "xyz789", "report.csv")
 **Migration is non-breaking:**
 ```elixir
 # Old code still works
-{:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "test"})
+{:ok, result} = McpClient.Tools.call(conn, "search", %{query: "test"})
 
 # New code uses generated modules
 {:ok, result} = MCPServers.GoogleDrive.search(conn, "test")
@@ -349,7 +349,7 @@ defmodule MyApp.Application do
       MyAppWeb.Endpoint,
 
       # MCP connection
-      {MCPClient, mcp_config()}
+      {McpClient, mcp_config()}
     ]
 
     opts = [strategy: :one_for_one, name: MyApp.Supervisor]
@@ -360,7 +360,7 @@ defmodule MyApp.Application do
     [
       name: MyApp.MCPConnection,
       transport: {
-        MCPClient.Transports.Stdio,
+        McpClient.Transports.Stdio,
         cmd: Application.get_env(:my_app, :mcp_cmd),
         args: Application.get_env(:my_app, :mcp_args)
       },
@@ -390,25 +390,25 @@ defmodule MyApp.MCP.Supervisor do
   def init(_init_arg) do
     children = [
       # SQLite database
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.MCP.Database,
-        transport: {MCPClient.Transports.Stdio,
+        transport: {McpClient.Transports.Stdio,
                     cmd: "uvx",
                     args: ["mcp-server-sqlite", "--db-path", "./data.db"]}
       ]},
 
       # Filesystem
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.MCP.Filesystem,
-        transport: {MCPClient.Transports.Stdio,
+        transport: {McpClient.Transports.Stdio,
                     cmd: "uvx",
                     args: ["mcp-server-filesystem", "./files"]}
       ]},
 
       # Cloud API
-      {MCPClient, [
+      {McpClient, [
         name: MyApp.MCP.Cloud,
-        transport: {MCPClient.Transports.HTTP,
+        transport: {McpClient.Transports.HTTP,
                     base_url: Application.get_env(:my_app, :mcp_cloud_url),
                     oauth: Application.get_env(:my_app, :mcp_oauth)}
       ]}
@@ -424,8 +424,8 @@ defmodule MyApp.MCP.Supervisor do
 end
 
 # Usage:
-{:ok, tools} = MCPClient.Tools.list(MyApp.MCP.Supervisor.database())
-{:ok, resources} = MCPClient.Resources.list(MyApp.MCP.Supervisor.filesystem())
+{:ok, tools} = McpClient.Tools.list(MyApp.MCP.Supervisor.database())
+{:ok, resources} = McpClient.Resources.list(MyApp.MCP.Supervisor.filesystem())
 ```
 
 ### Dynamic Connection Pool
@@ -445,7 +445,7 @@ defmodule MyApp.MCP.ConnectionPool do
   end
 
   def start_connection(server_config) do
-    spec = {MCPClient, server_config}
+    spec = {McpClient, server_config}
     DynamicSupervisor.start_child(__MODULE__, spec)
   end
 
@@ -460,11 +460,11 @@ end
 
 # Usage:
 {:ok, conn} = MyApp.MCP.ConnectionPool.start_connection([
-  transport: {MCPClient.Transports.Stdio, cmd: "mcp-server"}
+  transport: {McpClient.Transports.Stdio, cmd: "mcp-server"}
 ])
 
 # Use connection
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 
 # Clean up when done
 :ok = MyApp.MCP.ConnectionPool.stop_connection(conn)
@@ -482,7 +482,7 @@ defmodule MyApp.MCP.Registry do
 
   def start_connection(key, config) do
     config = Keyword.put(config, :name, via_tuple(key))
-    MCPClient.start_link(config)
+    McpClient.start_link(config)
   end
 
   def whereis(key) do
@@ -505,7 +505,7 @@ end
 
 # Lookup later
 {:ok, conn} = MyApp.MCP.Registry.whereis({:user, user_id})
-MCPClient.Tools.list(conn)
+McpClient.Tools.list(conn)
 ```
 
 ---
@@ -533,7 +533,7 @@ defmodule MyApp.MCP.ToolCache do
         {:ok, result}
 
       :miss ->
-        case MCPClient.Tools.call(conn, tool_name, args) do
+        case McpClient.Tools.call(conn, tool_name, args) do
           {:ok, result} = success ->
             cache_result(key, result)
             success
@@ -604,8 +604,8 @@ defmodule MyApp.MCP.ResourceCache do
         {:ok, contents}
 
       :miss ->
-        with {:ok, contents} <- MCPClient.Resources.read(conn, uri),
-             :ok <- MCPClient.Resources.subscribe(conn, uri) do
+        with {:ok, contents} <- McpClient.Resources.read(conn, uri),
+             :ok <- McpClient.Resources.subscribe(conn, uri) do
           GenServer.cast(__MODULE__, {:put, uri, contents})
           GenServer.cast(__MODULE__, {:subscribe, uri})
           {:ok, contents}
@@ -644,7 +644,7 @@ end
 
 # Notification handler integration:
 def handle_notification(notification) do
-  case MCPClient.NotificationRouter.route(notification) do
+  case McpClient.NotificationRouter.route(notification) do
     {:resources, :updated, %{"uri" => uri}} ->
       MyApp.MCP.ResourceCache.invalidate(uri)
 
@@ -670,7 +670,7 @@ defmodule MyApp.MCP.CapabilityCache do
   def get_capabilities(conn) do
     case Agent.get(__MODULE__, &Map.get(&1, conn)) do
       nil ->
-        caps = MCPClient.server_capabilities(conn)
+        caps = McpClient.server_capabilities(conn)
         Agent.update(__MODULE__, &Map.put(&1, conn, caps))
         caps
 
@@ -687,7 +687,7 @@ end
 
 # Usage:
 if MyApp.MCP.CapabilityCache.supports?(conn, ["resources", "subscribe"]) do
-  MCPClient.Resources.subscribe(conn, uri)
+  McpClient.Resources.subscribe(conn, uri)
 end
 ```
 
@@ -705,7 +705,7 @@ defmodule MyApp.MCP.Parallel do
     requests
     |> Enum.map(fn {tool, args} ->
       Task.async(fn ->
-        MCPClient.Tools.call(conn, tool, args)
+        McpClient.Tools.call(conn, tool, args)
       end)
     end)
     |> Enum.map(&Task.await(&1, 30_000))
@@ -715,7 +715,7 @@ defmodule MyApp.MCP.Parallel do
     uris
     |> Enum.map(fn uri ->
       Task.async(fn ->
-        MCPClient.Resources.read(conn, uri)
+        McpClient.Resources.read(conn, uri)
       end)
     end)
     |> Enum.map(&Task.await(&1, 30_000))
@@ -787,7 +787,7 @@ defmodule MyApp.MCP.Batcher do
     batch
     |> Enum.map(fn {tool, args, from} ->
       Task.async(fn ->
-        result = MCPClient.Tools.call(conn, tool, args)
+        result = McpClient.Tools.call(conn, tool, args)
         {from, result}
       end)
     end)
@@ -837,7 +837,7 @@ defmodule MyApp.MCP.Streaming do
   defp fetch_page(conn, tool, args, page) do
     args_with_page = Map.merge(args, %{page: page, page_size: 100})
 
-    case MCPClient.Tools.call(conn, tool, args_with_page) do
+    case McpClient.Tools.call(conn, tool, args_with_page) do
       {:ok, %{content: content}} ->
         if Enum.empty?(content) do
           :halt
@@ -911,18 +911,18 @@ defmodule MyApp.MCPTestHelpers do
     cmd = Keyword.get(opts, :cmd, "mcp-test-server")
     args = Keyword.get(opts, :args, [])
 
-    {:ok, conn} = MCPClient.start_link(
-      transport: {MCPClient.Transports.Stdio, cmd: cmd, args: args},
+    {:ok, conn} = McpClient.start_link(
+      transport: {McpClient.Transports.Stdio, cmd: cmd, args: args},
       request_timeout: 5_000
     )
 
-    on_exit(fn -> MCPClient.stop(conn) end)
+    on_exit(fn -> McpClient.stop(conn) end)
 
     conn
   end
 
   def assert_tool_exists(conn, tool_name) do
-    {:ok, tools} = MCPClient.Tools.list(conn)
+    {:ok, tools} = McpClient.Tools.list(conn)
     tool_names = Enum.map(tools, & &1.name)
 
     assert tool_name in tool_names,
@@ -930,7 +930,7 @@ defmodule MyApp.MCPTestHelpers do
   end
 
   def assert_capability(conn, capability_path) do
-    caps = MCPClient.server_capabilities(conn)
+    caps = McpClient.server_capabilities(conn)
     assert get_in(caps, capability_path) != nil,
            "Expected capability #{inspect(capability_path)} to be supported"
   end
@@ -943,7 +943,7 @@ test "calls search tool" do
   conn = start_test_server(cmd: "mcp-server-search")
   assert_tool_exists(conn, "search")
 
-  {:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "test"})
+  {:ok, result} = McpClient.Tools.call(conn, "search", %{query: "test"})
   assert result.isError == false
 end
 ```
@@ -961,20 +961,20 @@ defmodule MyApp.MCPIntegrationTest do
 
   setup_all do
     # Start real server
-    {:ok, conn} = MCPClient.start_link(
-      transport: {MCPClient.Transports.Stdio,
+    {:ok, conn} = McpClient.start_link(
+      transport: {McpClient.Transports.Stdio,
                   cmd: "uvx",
                   args: ["mcp-server-memory"]}
     )
 
-    on_exit(fn -> MCPClient.stop(conn) end)
+    on_exit(fn -> McpClient.stop(conn) end)
 
     %{conn: conn}
   end
 
   test "full workflow: list tools, call tool, check result", %{conn: conn} do
     # List tools
-    assert {:ok, tools} = MCPClient.Tools.list(conn)
+    assert {:ok, tools} = McpClient.Tools.list(conn)
     assert length(tools) > 0
 
     # Find a tool
@@ -982,7 +982,7 @@ defmodule MyApp.MCPIntegrationTest do
     assert is_binary(tool.name)
 
     # Call tool
-    assert {:ok, result} = MCPClient.Tools.call(conn, tool.name, %{})
+    assert {:ok, result} = McpClient.Tools.call(conn, tool.name, %{})
     assert is_list(result.content)
   end
 
@@ -1098,7 +1098,7 @@ defmodule MyApp.MCP.HealthMonitor do
   end
 
   defp check_health(conn) do
-    case MCPClient.Connection.call(conn, "ping", %{}, 5_000) do
+    case McpClient.Connection.call(conn, "ping", %{}, 5_000) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -1148,11 +1148,11 @@ defmodule MyApp.MCP.CredentialRotator do
     new_oauth = fetch_new_credentials()
 
     # Restart connection with new credentials
-    :ok = MCPClient.stop(state.conn)
+    :ok = McpClient.stop(state.conn)
 
-    {:ok, new_conn} = MCPClient.start_link(
+    {:ok, new_conn} = McpClient.start_link(
       name: MyApp.MCPConnection,
-      transport: {MCPClient.Transports.HTTP,
+      transport: {McpClient.Transports.HTTP,
                   base_url: "https://mcp.example.com",
                   oauth: new_oauth}
     )
@@ -1191,7 +1191,7 @@ defmodule MyApp.MCP.SecureWrapper do
     # Add signature to arguments
     signed_args = Map.put(args, "_signature", sign_request(tool, args))
 
-    MCPClient.Tools.call(conn, tool, signed_args)
+    McpClient.Tools.call(conn, tool, signed_args)
   end
 
   defp sign_request(tool, args) do

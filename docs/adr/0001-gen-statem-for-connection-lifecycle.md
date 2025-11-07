@@ -41,10 +41,10 @@ Using a plain GenServer would require manual state tracking with nested case sta
 Chosen option: **gen_statem with handle_event_function**, because:
 
 1. **Explicit state transitions**: Every `(state, event) -> action -> next_state` edge is visible and testable
-2. **Built-in timeout actions**: `:state_timeout` and `:event_timeout` avoid manual timer management
-3. **Mechanical completeness**: Missing state/event combinations cause match errors at compile-time
+2. **Timer discipline**: Built-in `:state_timeout`/`:event_timeout` cover the single outstanding timers (init, drain, backoff) while per-request timers use `:erlang.send_after/3` and enter through the regular `:info` path
+3. **Table-driven completeness**: We keep the transitions in a locked table and add a default clause that logs + crashes (in test builds) whenever an unexpected `(state, event)` arrives
 4. **Standard OTP**: No external dependencies; well-documented pattern
-5. **Backoff/retry**: State timeouts naturally model exponential backoff and request timeouts
+5. **Backoff/retry**: State machine actions encode retry scheduling + failure semantics in one place
 
 ### Implementation Details
 
@@ -82,6 +82,14 @@ def handle_event(:internal, {:spawn_transport, opts}, :starting, data) do
   actions = [{:state_timeout, init_timeout, :init_timeout}]
   {:next_state, :initializing, %{data | transport: transport}, actions}
 end
+
+# Catch-all (guard rail)
+def handle_event(event_type, event, state, data) do
+  Logger.error("Unhandled transition", event_type: event_type, event: event, state: state)
+  :telemetry.execute([:mcp_client, :connection, :missing_transition], %{count: 1}, %{state: state})
+  if Mix.env() == :test, do: raise("missing transition #{inspect({state, event_type, event})}")
+  {:keep_state_and_data, []}
+end
 ```
 
 ### Consequences
@@ -97,6 +105,7 @@ end
 - Slightly more boilerplate than GenServer (callback_mode, state tuple returns)
 - Team must understand gen_statem semantics (less common than GenServer)
 - Pattern matching on 4-tuple requires discipline
+- Missing `(state, event)` clauses surface at runtime, so we instrument a catch-all handler that logs at `:error`, increments telemetry, and crashes immediately under `MIX_ENV=test`
 
 **Neutral:**
 - All transitions must be explicitly defined (good for correctness, more initial code)

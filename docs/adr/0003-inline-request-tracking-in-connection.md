@@ -43,7 +43,7 @@ Chosen option: **Plain map in Connection state (Option 3)**, because:
 
 1. **Zero extra hops**: Request tracking is inline in Connection's handle_event
 2. **Simpler lifecycle**: Request map lifetime exactly matches Connection lifetime (no ETS cleanup on crash)
-3. **Deterministic timers**: gen_statem `:event_timeout` actions per request, not separate timer processes
+3. **Deterministic timers**: Each request stores its own `:erlang.send_after/3` timer reference, so we can cancel/retry without racing over the single gen_statem `:state_timeout`
 4. **Less code**: No RequestManager module, no ETS setup/teardown
 5. **Sufficient for MVP**: Expected concurrency << 1000; map performance is adequate
 
@@ -54,7 +54,8 @@ Chosen option: **Plain map in Connection state (Option 3)**, because:
 %{
   request_id => %{
     from: {pid(), reference()},       # GenServer reply target
-    timer_ref: reference(),            # event_timeout reference
+    timer_ref: reference(),            # send_after reference (per request)
+    retry_ref: reference() | nil,      # send_after reference for busy retry (if armed)
     started_at_mono: integer(),        # System.monotonic_time()
     method: String.t(),                # For telemetry/logging
     session_id: non_neg_integer()      # For stale response filtering
@@ -95,12 +96,35 @@ def handle_event({:call, from}, {:call_tool, name, args, opts}, :ready, data) do
   }
 
   data = put_in(data.requests[id], request)
-  actions = [{:state_timeout, timeout, {:request_timeout, id}}]
+  timer_ref = :erlang.send_after(timeout, self(), {:req_timeout, id})
+  request = Map.put(request, :timer_ref, timer_ref)
 
   case send_frame(data.transport, encode_request(id, name, args)) do
-    :ok -> {:keep_state, data, actions}
+    :ok ->
+      data = put_in(data.requests[id], request)
+      {:keep_state, data, []}
+
     {:error, reason} ->
       {:keep_state, delete_request(data, id), [{:reply, from, {:error, reason}}]}
+  end
+end
+```
+
+Timeout handling now lands in the regular `:info` callback:
+
+```elixir
+def handle_event(:info, {:req_timeout, id}, :ready, data) do
+  case Map.pop(data.requests, id) do
+    {nil, _requests} ->
+      {:keep_state_and_data, []}  # Already resolved
+
+    {request, requests} ->
+      :erlang.cancel_timer(request.timer_ref)
+      send_client_cancel(id)
+      error = %Error{type: :timeout, message: "request timed out"}
+      GenServer.reply(request.from, {:error, error})
+      data = %{data | requests: requests}
+      {:keep_state, data, []}
   end
 end
 ```

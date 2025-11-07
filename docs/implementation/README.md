@@ -6,6 +6,12 @@ This directory contains a series of self-contained implementation prompts for bu
 **Date:** 2025-11-06
 **Approach:** Test-Driven Development (TDD) with rgr
 
+> **Important update (2025-11-07):**
+> - Replace any `:state_timeout`-per-request usage in Prompts 03-05 with `:erlang.send_after/3` messages (`{:req_timeout, id}` / `{:retry_send, id, frame}`) as described in ADR-0003/0007.
+> - Drop the old `"$/reset"` notification references—reset is out-of-scope for MVP unless negotiated explicitly.
+> - Stdio transport (Prompt 06) must implement `Content-Length` framing with explicit header parsing; NDJSON instructions below are historical context only.
+> - Connection API is synchronous: `gen_statem.call/3` replies once per request (success/error/timeout) instead of returning `{:ok, id}` immediately.
+
 ---
 
 ## Implementation Order

@@ -25,7 +25,7 @@ Every feature module follows this structure:
 - Request functions (public API)
 - Response validation (private)
 - TypedStruct definitions for responses
-- Error normalization through `MCPClient.Error`
+- Error normalization through `McpClient.Error`
 
 ### 3. Type Safety
 
@@ -33,7 +33,30 @@ All responses are validated and converted to typed structs using `TypedStruct`.
 
 ### 4. Error Normalization
 
-All errors flow through `MCPClient.Error.normalize/2` for consistent handling.
+All errors flow through `McpClient.Error.normalize/2` for consistent handling.
+
+### 5. Capability Guards
+
+Every feature call checks that the server advertised the capability before issuing RPCs:
+
+```elixir
+defp ensure_capability(conn, capability) do
+  with {:ok, caps} <- Connection.server_capabilities(conn),
+       true <- Map.get(caps, capability, false) do
+    :ok
+  else
+    _ ->
+      {:error,
+       %Error{
+         type: :capability_not_supported,
+         message: "server does not advertise #{capability}",
+         details: %{capability: capability}
+       }}
+  end
+end
+```
+
+Each feature module calls `ensure_capability/2` (or its module-local equivalent) before delegating to `Connection.call/4`.
 
 ---
 
@@ -47,11 +70,11 @@ Agent loads tool definitions into context and calls through feature modules:
 
 ```elixir
 # 1. List tools (definitions go into agent context)
-{:ok, tools} = MCPClient.Tools.list(conn)
+{:ok, tools} = McpClient.Tools.list(conn)
 # Agent sees: Tool definitions (150K tokens for 1000 tools)
 
 # 2. Agent decides to call a tool
-{:ok, result} = MCPClient.Tools.call(conn, "google_drive__get_document", %{
+{:ok, result} = McpClient.Tools.call(conn, "google_drive__get_document", %{
   documentId: "abc123"
 })
 # Agent sees: Document content (50K tokens)
@@ -67,7 +90,7 @@ Generated modules wrap feature API, agent writes code:
 # Generated wrapper (post-MVP tooling: mix mcp.gen.client)
 defmodule MCPServers.GoogleDrive do
   def get_document(conn, document_id) do
-    MCPClient.Tools.call(conn, "google_drive__get_document", %{
+    McpClient.Tools.call(conn, "google_drive__get_document", %{
       documentId: document_id
     })
   end
@@ -84,7 +107,7 @@ alias MCPServers.GoogleDrive
 
 ### Key Insight: Same API, Different Consumption
 
-Both patterns use **identical client features API** (`MCPClient.Tools.call/4`, etc.):
+Both patterns use **identical client features API** (`McpClient.Tools.call/4`, etc.):
 
 - **Pattern A**: Agent calls API directly, sees everything
 - **Pattern B**: Generated code calls API, agent sees nothing (data in memory)
@@ -122,7 +145,7 @@ This design ensures:
 
 ## Feature Modules
 
-### MCPClient.Tools
+### McpClient.Tools
 
 **Purpose:** Execute server-provided functions with validated arguments.
 
@@ -160,21 +183,23 @@ end
 - `tools/list` → `list/2`
 - `tools/call` → `call/4`
 
+**Capability:** Requires server capability `:tools`; every call begins with `ensure_capability(conn, :tools)` before issuing RPCs.
+
 **Server Notifications:**
 - `notifications/tools/list_changed` - tools available changed
 
 **Example:**
 ```elixir
-{:ok, tools} = MCPClient.Tools.list(conn)
-# [%MCPClient.Tools.Tool{name: "search", description: "Search files", ...}]
+{:ok, tools} = McpClient.Tools.list(conn)
+# [%McpClient.Tools.Tool{name: "search", description: "Search files", ...}]
 
-{:ok, result} = MCPClient.Tools.call(conn, "search", %{query: "TODO"})
-# %MCPClient.Tools.CallResult{content: [...], isError: false}
+{:ok, result} = McpClient.Tools.call(conn, "search", %{query: "TODO"})
+# %McpClient.Tools.CallResult{content: [...], isError: false}
 ```
 
 ---
 
-### MCPClient.Resources
+### McpClient.Resources
 
 **Purpose:** Read and monitor server-provided data sources (files, URLs, database queries).
 
@@ -236,25 +261,27 @@ end
 - `resources/unsubscribe` → `unsubscribe/3`
 - `resources/templates/list` → `list_templates/2`
 
+**Capability:** Requires server capability `:resources`; every list/read/subscribe function calls `ensure_capability(conn, :resources)` before delegating.
+
 **Server Notifications:**
 - `notifications/resources/updated` - resource content changed
 - `notifications/resources/list_changed` - available resources changed
 
 **Example:**
 ```elixir
-{:ok, resources} = MCPClient.Resources.list(conn)
-# [%MCPClient.Resources.Resource{uri: "file:///foo", name: "foo", ...}]
+{:ok, resources} = McpClient.Resources.list(conn)
+# [%McpClient.Resources.Resource{uri: "file:///foo", name: "foo", ...}]
 
-{:ok, contents} = MCPClient.Resources.read(conn, "file:///foo")
-# %MCPClient.Resources.ResourceContents{contents: [...], uri: "file:///foo"}
+{:ok, contents} = McpClient.Resources.read(conn, "file:///foo")
+# %McpClient.Resources.ResourceContents{contents: [...], uri: "file:///foo"}
 
-:ok = MCPClient.Resources.subscribe(conn, "file:///foo")
+:ok = McpClient.Resources.subscribe(conn, "file:///foo")
 # Server will send notifications/resources/updated when file changes
 ```
 
 ---
 
-### MCPClient.Prompts
+### McpClient.Prompts
 
 **Purpose:** Retrieve and execute server-provided prompt templates for LLM interactions.
 
@@ -309,23 +336,25 @@ end
 - `prompts/list` → `list/2`
 - `prompts/get` → `get/4`
 
+**Capability:** Requires server capability `:prompts`; both functions call `ensure_capability(conn, :prompts)` before issuing the RPC.
+
 **Server Notifications:**
 - `notifications/prompts/list_changed` - available prompts changed
 
 **Example:**
 ```elixir
-{:ok, prompts} = MCPClient.Prompts.list(conn)
-# [%MCPClient.Prompts.Prompt{name: "summarize", description: "...", ...}]
+{:ok, prompts} = McpClient.Prompts.list(conn)
+# [%McpClient.Prompts.Prompt{name: "summarize", description: "...", ...}]
 
-{:ok, result} = MCPClient.Prompts.get(conn, "summarize", %{text: "..."})
-# %MCPClient.Prompts.GetPromptResult{
+{:ok, result} = McpClient.Prompts.get(conn, "summarize", %{text: "..."})
+# %McpClient.Prompts.GetPromptResult{
 #   messages: [%PromptMessage{role: "user", content: %{type: "text", text: "..."}}]
 # }
 ```
 
 ---
 
-### MCPClient.Sampling
+### McpClient.Sampling
 
 **Purpose:** Request LLM completions from the server (server-side sampling).
 
@@ -366,16 +395,18 @@ end
 **MCP Methods:**
 - `sampling/createMessage` → `create_message/3`
 
+**Capability:** Requires server capability `:sampling`; `create_message/3` calls `ensure_capability(conn, :sampling)` before sending the request.
+
 **Example:**
 ```elixir
-request = %MCPClient.Sampling.SamplingRequest{
+request = %McpClient.Sampling.SamplingRequest{
   messages: [%{role: "user", content: %{type: "text", text: "Hello"}}],
   maxTokens: 100,
   temperature: 0.7
 }
 
-{:ok, result} = MCPClient.Sampling.create_message(conn, request)
-# %MCPClient.Sampling.SamplingResult{
+{:ok, result} = McpClient.Sampling.create_message(conn, request)
+# %McpClient.Sampling.SamplingResult{
 #   role: "assistant",
 #   content: %{type: "text", text: "Hi there!"},
 #   model: "claude-3-5-sonnet-20241022",
@@ -385,7 +416,7 @@ request = %MCPClient.Sampling.SamplingRequest{
 
 ---
 
-### MCPClient.Roots
+### McpClient.Roots
 
 **Purpose:** Manage client workspace boundaries and file access permissions.
 
@@ -409,6 +440,8 @@ end
 **MCP Methods:**
 - `roots/list` → `list/2`
 
+**Capability:** Requires server capability `:roots`; `list/2` should call `ensure_capability(conn, :roots)` when querying the server for roots metadata.
+
 **Server Requests (handled by client):**
 - Server can call `roots/list` on the client to discover allowed paths
 - Not a typical client → server request; client provides this capability
@@ -416,7 +449,7 @@ end
 **Example:**
 ```elixir
 # Client declares roots during initialization
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   client_capabilities: %{
     roots: %{listChanged: true}
@@ -429,12 +462,12 @@ end
 
 # If server requests roots list, client responds automatically
 # Application can also query configured roots
-{:ok, roots} = MCPClient.Roots.list(conn)
+{:ok, roots} = McpClient.Roots.list(conn)
 ```
 
 ---
 
-### MCPClient.Logging
+### McpClient.Logging
 
 **Purpose:** Control server log levels and receive log messages.
 
@@ -461,19 +494,21 @@ end
 **MCP Methods:**
 - `logging/setLevel` → `set_level/3`
 
+**Capability:** Requires server capability `:logging`; `set_level/3` first ensures the capability is advertised.
+
 **Server Notifications:**
 - `notifications/message` - server log message
 
 **Example:**
 ```elixir
 # Set minimum log level
-:ok = MCPClient.Logging.set_level(conn, :info)
+:ok = McpClient.Logging.set_level(conn, :info)
 
 # Receive logs via notification handler
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: fn notification ->
-    case MCPClient.NotificationRouter.route(notification) do
+    case McpClient.NotificationRouter.route(notification) do
       {:logging, :message, params} ->
         Logger.log(
           params["level"] |> String.to_existing_atom(),
@@ -489,13 +524,13 @@ end
 
 ## Shared Infrastructure
 
-### MCPClient.Error
+### McpClient.Error
 
 **Purpose:** Normalize all error types into structured, informative errors.
 
 **Definition:**
 ```elixir
-defmodule MCPClient.Error do
+defmodule McpClient.Error do
   use TypedStruct
 
   typedstruct do
@@ -535,13 +570,13 @@ def list(conn, opts) do
 end
 ```
 
-### MCPClient.NotificationRouter
+### McpClient.NotificationRouter
 
 **Purpose:** Route server-initiated notifications to typed callbacks.
 
 **Definition:**
 ```elixir
-defmodule MCPClient.NotificationRouter do
+defmodule McpClient.NotificationRouter do
   @type notification :: map()
   @type route ::
     {:tools, :list_changed, params :: map()}
@@ -559,7 +594,7 @@ end
 
 **Usage:**
 ```elixir
-{:ok, conn} = MCPClient.start_link(
+{:ok, conn} = McpClient.start_link(
   transport: {...},
   notification_handler: fn notification ->
     case NotificationRouter.route(notification) do
@@ -583,24 +618,24 @@ end
 ## Implementation Checklist
 
 ### Phase 1: Infrastructure (Do First)
-- [ ] `MCPClient.Error` module with normalization logic
-- [ ] `MCPClient.NotificationRouter` module with routing logic
+- [ ] `McpClient.Error` module with normalization logic
+- [ ] `McpClient.NotificationRouter` module with routing logic
 - [ ] Integration tests with mock connection
 - [ ] Documentation examples
 
 ### Phase 2: Core Features (Priority Order)
-- [ ] `MCPClient.Tools` (highest priority - most common)
-- [ ] `MCPClient.Resources` (file/data access)
-- [ ] `MCPClient.Prompts` (LLM interaction)
+- [ ] `McpClient.Tools` (highest priority - most common)
+- [ ] `McpClient.Resources` (file/data access)
+- [ ] `McpClient.Prompts` (LLM interaction)
 
 ### Phase 3: Advanced Features
-- [ ] `MCPClient.Sampling` (server-side completions)
-- [ ] `MCPClient.Roots` (workspace management)
-- [ ] `MCPClient.Logging` (server log control)
+- [ ] `McpClient.Sampling` (server-side completions)
+- [ ] `McpClient.Roots` (workspace management)
+- [ ] `McpClient.Logging` (server log control)
 
 ### Phase 4: Integration & Polish
 - [ ] Integration tests with real MCP servers
-- [ ] Update `MCPClient` main module documentation
+- [ ] Update `McpClient` main module documentation
 - [ ] Add usage examples to README
 - [ ] Add guides for each feature domain
 
@@ -618,7 +653,7 @@ Each feature module should have:
 
 **Example:**
 ```elixir
-defmodule MCPClient.ToolsTest do
+defmodule McpClient.ToolsTest do
   use ExUnit.Case
   import Mox
 
@@ -630,7 +665,7 @@ defmodule MCPClient.ToolsTest do
       {:ok, %{"tools" => []}}
     end)
 
-    assert {:ok, []} = MCPClient.Tools.list(:mock_conn)
+    assert {:ok, []} = McpClient.Tools.list(:mock_conn)
   end
 
   test "list/1 validates response structure" do
@@ -639,7 +674,7 @@ defmodule MCPClient.ToolsTest do
       {:ok, %{"tools" => [%{"name" => "test", "inputSchema" => %{}}]}}
     end)
 
-    assert {:ok, [%Tool{name: "test"}]} = MCPClient.Tools.list(:mock_conn)
+    assert {:ok, [%Tool{name: "test"}]} = McpClient.Tools.list(:mock_conn)
   end
 
   test "list/1 normalizes errors" do
@@ -647,7 +682,7 @@ defmodule MCPClient.ToolsTest do
     |> expect(:call, fn _, _, _, _ -> {:error, :timeout} end)
 
     assert {:error, %Error{type: :timeout, operation: :tools_list}} =
-      MCPClient.Tools.list(:mock_conn)
+      McpClient.Tools.list(:mock_conn)
   end
 end
 ```
@@ -723,4 +758,4 @@ Add guides for:
 ---
 
 **Status**: Ready for implementation after core (PROMPT_01-09) complete
-**Next Step**: Implement `MCPClient.Error` and `MCPClient.NotificationRouter` as foundation
+**Next Step**: Implement `McpClient.Error` and `McpClient.NotificationRouter` as foundation

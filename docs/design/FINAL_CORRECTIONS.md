@@ -27,14 +27,14 @@ This document tracks the final surgical corrections applied to the MVP specifica
 
 ### 2. ✅ Clear/Notify Retries on All Failures
 
-**Issue:** Retry state was only cleared on shutdown, not on transport failures or reset notifications. This leaked reply paths and could cause duplicate/late replies.
+**Issue:** Retry state was only cleared on shutdown, not on transport failures. This leaked reply paths and could cause duplicate/late replies.
 
 **Fix Applied:**
 - **STATE_TRANSITIONS.md**: Added `fail_and_clear_retries/2` helper function
 - Updated actions for:
   - `:ready` + `transport_down` → fail/clear retries
   - `:ready` + oversized frame → fail/clear retries
-  - `:ready` + reset notification → fail/clear retries
+  - (Reset notifications were removed; only transport-driven failures remain)
 - All in-retry callers now receive appropriate error before state transition
 
 **Impact:** No leaked retry state; consistent error delivery across all failure modes.
@@ -217,7 +217,7 @@ Updated invariant:
 Before implementation starts, verify:
 
 - [x] Per-call timeouts survive retry path
-- [x] Retry state cleared on all failure transitions (transport_down, oversized, reset)
+- [x] Retry state cleared on all failure transitions (transport_down, oversized)
 - [x] Initialize sent before set_active(:once)
 - [x] Invalid JSON has explicit state table rows
 - [x] Retry memory tradeoff documented

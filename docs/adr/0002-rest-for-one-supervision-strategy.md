@@ -63,10 +63,21 @@ defmodule McpClient.ConnectionSupervisor do
 
   @impl true
   def init(opts) do
-    children = [
-      {McpClient.Transport, Keyword.take(opts, [:transport, :command, :args, :url])},
-      {McpClient.Connection, opts}
-    ]
+    {transport_mod, transport_opts} = Keyword.fetch!(opts, :transport)
+
+    transport_child =
+      Supervisor.child_spec(
+        {transport_mod, transport_opts},
+        id: :transport
+      )
+
+    connection_child =
+      Supervisor.child_spec(
+        {McpClient.Connection, Keyword.put(opts, :transport_mod, transport_mod)},
+        id: :connection
+      )
+
+    children = [transport_child, connection_child]
 
     Supervisor.init(children, strategy: :rest_for_one)
   end
@@ -77,6 +88,7 @@ end
 - Transport must be first child
 - Connection must be second child
 - Order determines restart cascade
+- Connection never spawns its own transport; instead, the supervisor provides the module + options and the Connection receives the running transport PID via its `init/1` arguments/result of `Transport.attach/1`.
 
 **Failure scenarios:**
 
@@ -85,6 +97,9 @@ end
 | Transport dies | Supervisor restarts Transport, then Connection (both fresh) |
 | Connection dies | Supervisor restarts only Connection (Transport unaffected) |
 | Both die | Standard supervisor restart logic (intensity/period limits) |
+
+- `opts[:transport]` is a `{module, keyword}` tuple (e.g., `{McpClient.Transports.Stdio, cmd: ...}`); the supervisor is the only place that knows how to start children.
+- Connection receives the transport PID in `init/1` via `{:ok, transport_pid}` return from the transport child (or by reading `Process.whereis/1` if using named processes). No internal `spawn_link` calls remain.
 
 ### Consequences
 
