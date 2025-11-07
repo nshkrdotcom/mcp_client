@@ -91,9 +91,58 @@ Execute prompts in numerical order. Each prompt builds on previous work but incl
 
 ---
 
+### Client Features (Prompts 10-15)
+
+**PROMPT_10: Error and Notification Infrastructure**
+- File: `PROMPT_10_error_and_notification_infrastructure.md`
+- Creates: `lib/mcp_client/error.ex`, `lib/mcp_client/notification_router.ex`
+- Duration: ~30 minutes
+- Tests: Error normalization, notification routing
+- Dependencies: PROMPT_01-09 (Core complete)
+
+**PROMPT_11: Tools Feature**
+- File: `PROMPT_11_tools_feature.md`
+- Creates: `lib/mcp_client/tools.ex`
+- Duration: ~45 minutes
+- Tests: list/2, call/4 with validation
+- Dependencies: PROMPT_10
+
+**PROMPT_12: Resources Feature**
+- File: `PROMPT_12_resources_feature.md`
+- Creates: `lib/mcp_client/resources.ex`
+- Duration: ~45 minutes
+- Tests: list/read/subscribe/unsubscribe
+- Dependencies: PROMPT_10
+
+**PROMPT_13: Prompts Feature**
+- File: `PROMPT_13_prompts_feature.md`
+- Creates: `lib/mcp_client/prompts.ex`
+- Duration: ~30 minutes
+- Tests: list/2, get/4
+- Dependencies: PROMPT_10
+
+**PROMPT_14: Sampling, Roots, Logging**
+- File: `PROMPT_14_sampling_roots_logging.md`
+- Creates: `lib/mcp_client/sampling.ex`, `roots.ex`, `logging.ex`
+- Duration: ~45 minutes
+- Tests: All three modules
+- Dependencies: PROMPT_10
+
+**PROMPT_15: Feature Integration Tests**
+- File: `PROMPT_15_feature_integration_tests.md`
+- Creates: `test/mcp_client/features_integration_test.exs`
+- Duration: ~60 minutes
+- Tests: End-to-end with real MCP servers
+- Dependencies: PROMPT_10-14 (All features)
+
+---
+
 ## Total Implementation Time
 
-**Estimated:** 6-8 hours for experienced Elixir developer
+**Core (PROMPT_01-09):** 6-8 hours for experienced Elixir developer
+**Client Features (PROMPT_10-15):** 4-5 hours additional
+**Total:** 10-13 hours for complete implementation
+
 **Actual may vary based on:** Testing thoroughness, debugging, iteration
 
 ---
@@ -296,16 +345,29 @@ For implementation questions, refer to:
 
 Before considering implementation complete:
 
-- [ ] All 9 prompts executed in order
-- [ ] All tests pass (`mix test`)
+**Core (PROMPT_01-09):**
+- [ ] All 9 core prompts executed in order
+- [ ] Core tests pass (`mix test test/mcp_client/connection_test.exs`, etc.)
+- [ ] Integration tests pass (PROMPT_08)
 - [ ] No compilation warnings
-- [ ] No Credo warnings (`mix credo`)
+
+**Client Features (PROMPT_10-15):**
+- [ ] All 6 feature prompts executed in order
+- [ ] Feature tests pass (`mix test test/mcp_client/tools_test.exs`, etc.)
+- [ ] Integration tests pass (PROMPT_15) with real servers
+- [ ] No compilation warnings
+
+**Quality Checks:**
+- [ ] All tests pass (`mix test`)
+- [ ] No Credo warnings (`mix credo --strict`)
 - [ ] Dialyzer passes (`mix dialyzer`)
+- [ ] Code formatted (`mix format --check-formatted`)
+
+**Documentation:**
 - [ ] README renders correctly
 - [ ] Examples are runnable
-- [ ] All critical scenarios pass (PROMPT_08)
-- [ ] Code formatted (`mix format`)
 - [ ] Documentation built (`mix docs`)
+- [ ] HexDocs preview looks good
 
 ---
 

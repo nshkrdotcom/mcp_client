@@ -162,6 +162,40 @@ The MVP must balance **completeness** (usable for real applications) with **simp
   - **Why deferred**: High-level workflow, belongs in separate library
   - **Post-MVP trigger**: Demand for MCP orchestration layer
 
+### Code Execution Pattern Support
+
+**Deferred:**
+- ❌ **Code generation tool**: Generate Elixir modules from MCP servers (`mix mcp.gen.client`)
+  - **Why deferred**: Core protocol is MVP priority; code generation is optimization layer
+  - **Post-MVP trigger**: Users connecting to 100+ tools, context window overflow
+  - **Impact**: 98.7% token reduction for large tool sets (see CODE_EXECUTION_PATTERN.md)
+
+- ❌ **Progressive tool discovery**: `search_tools` capability with detail levels
+  - **Why deferred**: Adds protocol complexity; MVP loads all tools upfront
+  - **Post-MVP trigger**: Users report context window issues with tool definitions
+  - **Alternative**: Filesystem-style progressive discovery (deferred)
+
+- ❌ **Skills pattern**: Filesystem-based reusable agent functions (`.skills/` directory)
+  - **Why deferred**: Requires code generation foundation; application-level concern
+  - **Post-MVP trigger**: Community demand for agent skill libraries
+  - **Alternative**: Users can build their own abstractions on Connection.call/4
+
+- ❌ **PII tokenization layer**: Automatic tokenization of sensitive data in execution context
+  - **Why deferred**: Complex security feature, needs careful design and audit
+  - **Post-MVP trigger**: Enterprise customers with compliance requirements (GDPR, HIPAA)
+  - **Alternative**: Application-level data filtering
+
+- ❌ **Execution sandbox**: Secure code execution environment for generated code
+  - **Why deferred**: Complex infrastructure requirement; needs OS-level isolation
+  - **Post-MVP trigger**: Production agents writing and executing code
+  - **Alternative**: Manual code review before execution
+
+**Note**: The MVP Connection.call/4 API already supports BOTH usage patterns:
+- **Pattern A (Direct)**: Load all tools, call through model context
+- **Pattern B (Code Execution)**: Generate modules, agent writes code
+
+Post-MVP work is about **tooling** (code generation) and **optimization** (progressive discovery), not core protocol changes.
+
 ### Transports
 
 **Deferred:**
@@ -212,19 +246,27 @@ The MVP must balance **completeness** (usable for real applications) with **simp
 ## Post-MVP Roadmap Priority
 
 **Tier 1 (High demand expected):**
-1. Async notification dispatch (TaskSupervisor) - common pain point
-2. Session ID gating - correctness hardening
-3. Offload JSON decode pool - performance for large payloads
+1. **Code generation tool** (`mix mcp.gen.client`) - **98.7% token reduction** for large tool sets
+2. Async notification dispatch (TaskSupervisor) - common pain point
+3. Session ID gating - correctness hardening
+4. Offload JSON decode pool - performance for large payloads
 
 **Tier 2 (Medium demand):**
-4. Connection pooling - high-throughput applications
-5. ETS-based request tracking - scale beyond 1K concurrent
-6. Resource caching - common application pattern
+5. Connection pooling - high-throughput applications
+6. ETS-based request tracking - scale beyond 1K concurrent
+7. Resource caching - common application pattern
+8. **Progressive tool discovery** - context efficiency for 100+ tools
 
 **Tier 3 (Niche/future):**
-7. WebSocket transport - browser/WASM use cases
-8. Compression - bandwidth optimization
-9. Multiplexing - protocol optimization
+9. WebSocket transport - browser/WASM use cases
+10. Compression - bandwidth optimization
+11. Multiplexing - protocol optimization
+12. **Skills pattern** - reusable agent code libraries
+13. **PII tokenization layer** - enterprise compliance requirements
+14. **Execution sandbox** - secure code execution environment
+
+**Note on Code Execution Pattern:**
+The code generation tool (Tier 1) is the **highest-impact post-MVP feature** based on Anthropic's research showing 98.7% token reduction (150K → 2K tokens) when using code execution vs. direct tool calls for large tool sets. This feature enables applications with 100+ tools to remain feasible within context windows.
 
 ---
 

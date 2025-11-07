@@ -4,8 +4,19 @@ Complete documentation for the Elixir Model Context Protocol (MCP) client librar
 
 ## Quick Links
 
+**For Implementers:**
 - **[MVP Specification](design/MVP_SPEC.md)** - Complete technical specification for MVP implementation
+- **[Implementation Prompts](implementation/)** - Step-by-step implementation guides (PROMPT_01-15)
 - **[State Transitions](design/STATE_TRANSITIONS.md)** - Complete state machine transition table
+
+**For Users:**
+- **[Getting Started Guide](guides/GETTING_STARTED.md)** - Quick start and common patterns
+- **[Client Features](design/CLIENT_FEATURES.md)** - High-level API design for MCP primitives
+- **[Roadmap](ROADMAP.md)** - Post-MVP features and timeline
+
+**Reference:**
+- **[Protocol Details](design/PROTOCOL_DETAILS.md)** - Complete JSON-RPC and MCP message schemas
+- **[Transport Specifications](design/TRANSPORT_SPECIFICATIONS.md)** - stdio, SSE, HTTP+SSE details
 - **[Architecture Decision Records](adr/)** - Why we made each architectural decision
 
 ## Documentation Structure
@@ -26,6 +37,26 @@ Complete documentation for the Elixir Model Context Protocol (MCP) client librar
 - Guard functions and common action patterns
 - Invariants and testing strategies
 - Example sequence diagrams
+
+**[design/CLIENT_FEATURES.md](design/CLIENT_FEATURES.md)**
+- High-level API design for MCP primitives (Tools, Resources, Prompts, Sampling, Roots, Logging)
+- Module structure and type specifications
+- Error handling and notification routing patterns
+- Implementation checklist and testing strategy
+
+**[design/TRANSPORT_SPECIFICATIONS.md](design/TRANSPORT_SPECIFICATIONS.md)**
+- Complete transport layer specifications (stdio, SSE, HTTP+SSE)
+- Transport behavior contract and message protocol
+- Implementation details for each transport type
+- OAuth 2.1 support for HTTP transport
+- Testing requirements
+
+**[design/PROTOCOL_DETAILS.md](design/PROTOCOL_DETAILS.md)**
+- JSON-RPC 2.0 foundation and message formats
+- Complete error code mappings (standard + MCP-specific)
+- Connection lifecycle and capability negotiation
+- Request parameter schemas for all MCP methods
+- Progress tokens and cancellation
 
 ### Architecture Decision Records (ADRs)
 
@@ -48,6 +79,45 @@ Located in [`adr/`](adr/), these capture the **why** behind each major design de
 
 #### Scope
 - **[ADR-0010](adr/0010-mvp-scope-and-deferrals.md)**: MVP scope and explicit deferrals
+- **[ADR-0011](adr/0011-client-features-architecture.md)**: Client features architecture
+
+### Implementation Prompts
+
+Located in [`implementation/`](implementation/), these provide step-by-step implementation guides:
+
+**Core (PROMPT_01-09):**
+- Connection scaffold, state machine (01-05)
+- Transport behavior and stdio (06)
+- Public API and integration tests (07-08)
+- Documentation (09)
+
+**Client Features (PROMPT_10-15):**
+- Error & notification infrastructure (10)
+- Tools, Resources, Prompts (11-13)
+- Sampling, Roots, Logging (14)
+- Feature integration tests (15)
+
+See [implementation/README.md](implementation/README.md) for complete prompt index.
+
+### User Guides
+
+Located in [`guides/`](guides/), these provide practical usage documentation:
+
+- **[GETTING_STARTED.md](guides/GETTING_STARTED.md)**: Quick start and common patterns
+- **[CONFIGURATION.md](guides/CONFIGURATION.md)**: Complete configuration reference
+- **[ERROR_HANDLING.md](guides/ERROR_HANDLING.md)**: Comprehensive error handling strategies
+- **[ADVANCED_PATTERNS.md](guides/ADVANCED_PATTERNS.md)**: Production patterns (caching, pooling, monitoring)
+- **[FAQ.md](guides/FAQ.md)**: Frequently asked questions
+
+### Roadmap
+
+**[ROADMAP.md](ROADMAP.md)**
+- Post-MVP feature timeline and priorities
+- Tier 1 features: Code generation tool, progressive discovery, async handlers
+- Tier 2 features: Connection pooling, ETS tracking, resource caching
+- Tier 3 features: WebSocket transport, compression, skills pattern
+- Release timeline (v0.2.x - v1.0.x)
+- How to influence priorities and contribute
 
 ### Design Process Archive
 
@@ -127,11 +197,31 @@ These principles guided all decisions:
 
 | Document | Version | Status | Last Updated |
 |----------|---------|--------|--------------|
+| **Design Documents** | | | |
 | MVP_SPEC.md | 1.0.0-mvp | Locked | 2025-11-06 |
 | STATE_TRANSITIONS.md | 1.0.0 | Locked | 2025-11-06 |
+| CLIENT_FEATURES.md | 1.0.0 | Accepted | 2025-11-07 |
+| TRANSPORT_SPECIFICATIONS.md | 1.0.0 | Accepted | 2025-11-07 |
+| PROTOCOL_DETAILS.md | 1.0.0 | Accepted | 2025-11-07 |
+| CODE_EXECUTION_PATTERN.md | 1.0.0 | Accepted | 2025-11-07 |
+| **Implementation Prompts** | | | |
+| PROMPT_01 through PROMPT_09 | - | Ready | 2025-11-06 |
+| PROMPT_10 through PROMPT_15 | - | Ready | 2025-11-07 |
+| **Architecture Decisions** | | | |
 | ADR-0001 through ADR-0010 | - | Accepted | 2025-11-06 |
+| ADR-0011 | - | Accepted | 2025-11-07 |
+| **User Guides** | | | |
+| GETTING_STARTED.md | 1.0.0 | Complete | 2025-11-07 |
+| CONFIGURATION.md | 1.0.0 | Complete | 2025-11-07 |
+| ERROR_HANDLING.md | 1.0.0 | Complete | 2025-11-07 |
+| ADVANCED_PATTERNS.md | 1.0.0 | Complete | 2025-11-07 |
+| FAQ.md | 1.0.0 | Complete | 2025-11-07 |
+| **Roadmap** | | | |
+| ROADMAP.md | 1.0.0 | Complete | 2025-11-07 |
 
 **"Locked" means**: No changes without new ADR and team approval.
+**"Ready" means**: Implementation prompts are complete and ready to execute.
+**"Complete" means**: Documentation is finished and ready for users.
 
 ---
 

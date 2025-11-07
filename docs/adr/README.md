@@ -42,6 +42,9 @@ Decision to fail all in-flight requests immediately on shutdown rather than wait
 **[ADR-0010: MVP Scope and Explicit Deferrals](0010-mvp-scope-and-deferrals.md)**
 Complete definition of what's included vs. deferred in MVP. Covers protocol features, transports, reliability, observability, and explicitly lists post-MVP enhancements.
 
+**[ADR-0011: Client Features Architecture](0011-client-features-architecture.md)**
+Architecture for high-level MCP feature APIs (Tools, Resources, Prompts, Sampling, Roots, Logging) built on top of core connection layer. Defines clean API boundary, error normalization, notification routing, and incremental implementation strategy.
+
 ## Reading Order
 
 For new contributors or implementers:
@@ -49,8 +52,9 @@ For new contributors or implementers:
 1. Start with **ADR-0010** (MVP Scope) to understand boundaries
 2. Read **ADR-0001** (gen_statem) and **ADR-0002** (supervision) for architecture foundation
 3. Read **ADR-0003** through **ADR-0009** for detailed subsystem decisions
-4. Consult `../design/MVP_SPEC.md` for complete implementation specification
-5. Reference `../design/STATE_TRANSITIONS.md` while implementing state machine
+4. Read **ADR-0011** (Client Features) for high-level API architecture
+5. Consult `../design/MVP_SPEC.md` for complete implementation specification
+6. Reference `../design/STATE_TRANSITIONS.md` while implementing state machine
 
 ## Design Evolution
 
@@ -113,6 +117,6 @@ When proposing changes to architectural decisions:
 
 ---
 
-**Last Updated**: 2025-11-06
-**ADR Count**: 10
+**Last Updated**: 2025-11-07
+**ADR Count**: 11
 **Status**: Locked for MVP
