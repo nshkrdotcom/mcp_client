@@ -39,13 +39,38 @@ This document provides the complete, authoritative state transition table for th
 
 ---
 
+## Transport Message Contract
+
+All transport implementations must send messages in these **exact shapes**:
+
+```elixir
+# Transport is ready to send/receive
+{:transport, :up}
+
+# Complete frame received (one JSON-RPC message)
+{:transport, :frame, binary()}
+
+# Transport closed or failed
+{:transport, :down, reason :: term()}
+```
+
+**Requirements:**
+- `:up` sent exactly once after successful initialization
+- `:frame` sent only after Connection calls `Transport.set_active(transport, :once)`
+- `:down` sent on any failure (connection closed, network error, etc.)
+- Frames are **complete**: one binary = one JSON-RPC message (no partial frames)
+
+See ADR-0002 and ADR-0004 for transport behavior specification.
+
+---
+
 ## Complete Transition Table
 
 ### `:starting` State
 
 | Event | Guard/Notes | Action | Next State |
 |-------|-------------|--------|------------|
-| `{:internal, {:spawn_transport, opts}}` | - | Spawn transport; set active(:once); arm init timeout | `:initializing` |
+| `{:internal, {:spawn_transport, opts}}` | - | Spawn transport; wait for transport_up | `:initializing` |
 | `{:internal, {:spawn_error, reason}}` | - | Log error; schedule backoff (1st attempt) | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; exit(normal) | `:closing` |
 | `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :starting}}}` | `:starting` |
@@ -56,12 +81,14 @@ This document provides the complete, authoritative state transition table for th
 
 | Event | Guard/Notes | Action | Next State |
 |-------|-------------|--------|------------|
-| `{:info, {:transport, :frame, binary}}` | `byte_size > max_frame_bytes` | Log error; close transport; schedule backoff | `:backoff` |
-| `{:info, {:transport, :frame, binary}}` | Valid init response, caps valid | Store caps; bump session_id; reply "initialized"; arm tombstone sweep | `:ready` |
-| `{:info, {:transport, :frame, binary}}` | Valid init response, caps **invalid** | Log warn; schedule backoff | `:backoff` |
-| `{:info, {:transport, :frame, binary}}` | Init error response | Log error; schedule backoff | `:backoff` |
+| `{:info, {:transport, :up}}` | - | Send `initialize` request **then** set_active(:once); arm init_timeout | `:initializing` |
+| `{:info, {:transport, :frame, binary}}` | `byte_size > max_frame_bytes` | Log error; close transport (no set_active); schedule backoff | `:backoff` |
+| `{:info, {:transport, :frame, binary}}` | Valid init response, caps valid | Store caps; bump session_id; **reset backoff_delay to backoff_min**; reply "initialized"; arm tombstone sweep; set_active(:once) | `:ready` |
+| `{:info, {:transport, :frame, binary}}` | Valid init response, caps **invalid** | Log warn; close transport; schedule backoff | `:backoff` |
+| `{:info, {:transport, :frame, binary}}` | Init error response | Log error; close transport; schedule backoff | `:backoff` |
+| `{:info, {:transport, :frame, binary}}` | Invalid JSON | Log warn; set_active(:once) | `:initializing` |
 | `{:info, {:transport, :frame, binary}}` | Other (not init response) | Drop frame; set_active(:once) | `:initializing` |
-| `{:state_timeout, :init_timeout}` | - | Log timeout; schedule backoff | `:backoff` |
+| `{:state_timeout, :init_timeout}` | - | Log timeout; close transport; schedule backoff | `:backoff` |
 | `{:info, {:transport, :down, reason}}` | - | Log reason; schedule backoff | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; close transport | `:closing` |
 | `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :initializing}}}` | `:initializing` |
@@ -69,13 +96,24 @@ This document provides the complete, authoritative state transition table for th
 **Capability validation (guard):**
 ```elixir
 def valid_caps?(caps) do
-  is_map(caps) and
-  is_binary(caps["protocolVersion"]) and
-  compatible_version?(caps["protocolVersion"])
+  is_map(caps) and has_valid_version?(caps)
 end
 
-defp compatible_version?(v), do: String.starts_with?(v, "2024-11")
+defp has_valid_version?(caps) do
+  version = caps["protocolVersion"] || caps[:protocolVersion]
+  is_binary(version) and compatible_version?(version)
+end
+
+# Accept YYYY-MM compatibility for MVP (same minor version window)
+# This is MVP policy; may tighten to exact match post-MVP
+defp compatible_version?("2024-11-05"), do: true
+defp compatible_version?(<<"2024-11", _rest::binary>>), do: true
+defp compatible_version?(_), do: false
 ```
+
+**Notes:**
+- Accepts both string and atom keys for caps to accommodate test transports
+- YYYY-MM compatibility (same minor version) is **MVP policy**; spec may require exact version match in future
 
 ---
 
@@ -83,26 +121,33 @@ defp compatible_version?(v), do: String.starts_with?(v, "2024-11")
 
 | Event | Guard/Notes | Action | Next State |
 |-------|-------------|--------|------------|
-| `{:info, {:transport, :frame, binary}}` | `byte_size > max_frame_bytes` | Log error; close transport; tombstone all; schedule backoff | `:backoff` |
+| `{:info, {:transport, :frame, binary}}` | `byte_size > max_frame_bytes` | Log error; close transport (no set_active); tombstone all requests; fail/clear retries; schedule backoff | `:backoff` |
 | `{:info, {:transport, :frame, binary}}` | Response; ID in `requests` | Deliver to caller; cancel timeout; delete request; set_active(:once) | `:ready` |
 | `{:info, {:transport, :frame, binary}}` | Response; ID in `tombstones` | Drop (stale response); set_active(:once) | `:ready` |
-| `{:info, {:transport, :frame, binary}}` | Response; ID unknown | Warn + drop; set_active(:once) | `:ready` |
-| `{:info, {:transport, :frame, binary}}` | Server notification (reset method) | Tombstone all requests; clear requests; start init | `:initializing` |
+| `{:info, {:transport, :frame, binary}}` | Response; ID unknown | Log at debug; drop; set_active(:once) | `:ready` |
+| `{:info, {:transport, :frame, binary}}` | Invalid JSON | Log warn; set_active(:once) | `:ready` |
+| `{:info, {:transport, :frame, binary}}` | Server notification (reset method) | Tombstone all requests; fail/clear retries; close transport; start init | `:initializing` |
 | `{:info, {:transport, :frame, binary}}` | Server notification (other) | Dispatch to handlers (sync); set_active(:once) | `:ready` |
-| `{:info, {:transport, :frame, binary}}` | Server request | Handle server request (future); set_active(:once) | `:ready` |
-| `{:info, {:transport, :down, reason}}` | - | Tombstone all requests; clear requests; schedule backoff | `:backoff` |
-| `{:state_timeout, {:request_timeout, id}}` | ID in `requests` | Cancel upstream (send `$/cancelRequest`); tombstone ID; reply timeout | `:ready` |
+| `{:info, {:transport, :frame, binary}}` | Server request | Reply JSON-RPC error (-32601 method not found); log at debug; set_active(:once) | `:ready` |
+| `{:info, {:transport, :down, reason}}` | - | Tombstone all requests; fail/clear retries; **do not re-arm set_active**; schedule backoff | `:backoff` |
+| `{:state_timeout, {:request_timeout, id}}` | ID in `requests` | Send `$/cancelRequest` (single attempt, no retry); tombstone ID; reply timeout | `:ready` |
 | `{:state_timeout, {:request_timeout, id}}` | ID not in `requests` | Ignore (already handled) | `:ready` |
 | `{:state_timeout, :sweep_tombstones}` | - | Remove expired tombstones; reschedule sweep | `:ready` |
-| `{:call, from, {:call_tool, name, args, opts}}` | - | Generate ID; store request; send frame (with retry); arm timeout | `:ready` (or error) |
+| `{:call, from, {:call_tool, name, args, opts}}` | - | Generate ID; send frame (with retry on :busy); store request or retry state; arm timeout | `:ready` |
 | `{:call, from, {:list_resources, opts}}` | - | Same as above | `:ready` |
 | `{:call, from, ...}` | Any other user call | Same pattern | `:ready` |
-| `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; fail all in-flight; tombstone all; close | `:closing` |
-| `{:state_timeout, :retry_send}` | Retry state present; attempts < max | Retry send_frame; increment attempts; reschedule if still busy | `:ready` |
-| `{:state_timeout, :retry_send}` | Retry state present; attempts >= max | Reply `{:error, :backpressure}`; clear retry state | `:ready` |
+| `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; fail all in-flight + retries; tombstone all; clear retries; close | `:closing` |
+| `{:state_timeout, {:retry_send, id}}` | ID in `retries`; attempts < max | Retry send_frame; on success: promote to request; on :busy: increment attempts, reschedule | `:ready` |
+| `{:state_timeout, {:retry_send, id}}` | ID in `retries`; attempts >= max | Reply `{:error, :backpressure}`; delete from retries | `:ready` |
+| `{:state_timeout, {:retry_send, id}}` | ID not in `retries` | Ignore (cleared during stop) | `:ready` |
 
 **Reset notification method (configurable):**
 Default: `"notifications/cancelled"`
+
+**Cancellation policy:**
+- `$/cancelRequest` is sent as **single attempt, no retry**
+- If send fails (`:busy` or transport down), skip—tombstone already prevents late response delivery
+- Avoids re-ordering risks from retry logic on cancel messages
 
 **Tombstone all requests:**
 ```elixir
@@ -116,6 +161,18 @@ defp tombstone_all_requests(data) do
 end
 ```
 
+**Fail and clear retries:**
+```elixir
+defp fail_and_clear_retries(data, error) do
+  # Reply to all in-retry callers
+  for {_id, %{from: from}} <- data.retries do
+    GenServer.reply(from, {:error, error})
+  end
+
+  %{data | retries: %{}}
+end
+```
+
 ---
 
 ### `:backoff` State
@@ -124,10 +181,12 @@ end
 |-------|-------------|--------|------------|
 | `{:state_timeout, :backoff_expire}` | - | Attempt reconnect (spawn transport); start init | `:initializing` |
 | `{:info, {:transport, :up}}` | - | Start init handshake | `:initializing` |
-| `{:info, {:transport, :frame, _}}` | - | Drop (no guarantees in backoff) | `:backoff` |
+| `{:info, {:transport, :frame, _}}` | - | Drop (no set_active; transport inactive in backoff) | `:backoff` |
 | `{:info, {:transport, :down, _}}` | - | Ignore (already in backoff) | `:backoff` |
 | `{:call, from, _any_user_call}` | - | Reply `{:error, %Error{kind: :state, data: %{state: :backoff}}}` | `:backoff` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; close (if transport exists) | `:closing` |
+
+**Note:** In `:backoff`, transport is inactive (no `set_active(:once)` calls). Frames should not arrive, but if they do (race), they are dropped.
 
 **Backoff calculation:**
 ```elixir
@@ -148,8 +207,13 @@ next_delay = min(current_delay * 2, @backoff_max) |> jitter(0.2)
 |-------|-------------|--------|------------|
 | `{:state_timeout, :exit}` | - | `{:stop, :normal}` (exit process) | N/A |
 | `{:call, from, :stop}` | - | Reply `{:ok, :already_closing}` (idempotent) | `:closing` |
+| `{:state_timeout, {:retry_send, _id}}` | - | Drop silently (retries cleared on entering :closing) | `:closing` |
+| `{:state_timeout, {:request_timeout, _id}}` | - | Drop silently (requests failed on entering :closing) | `:closing` |
 | `{:info, {:transport, :down, _}}` | - | Accelerate exit (stop immediately) | N/A |
+| `{:info, {:transport, :frame, _}}` | - | Drop (no set_active after close) | `:closing` |
 | _any other event_ | - | Drop (already closing) | `:closing` |
+
+**Note:** On entering `:closing`, all `requests` and `retries` are cleared and callers are notified. Subsequent timeout events for those IDs are safely ignored.
 
 ---
 
@@ -293,30 +357,47 @@ end
 ### Request Start/Stop
 
 ```elixir
-# On request send
+# On request send (store start time in request)
+request = %{
+  from: from,
+  started_at_mono: System.monotonic_time(),  # ← For duration calculation
+  ...
+}
+
 :telemetry.execute(
   [:mcp_client, :request, :start],
-  %{system_time: System.system_time()},
+  %{system_time: System.system_time()},  # Wall-clock for logs
   %{client: self(), method: method, id: id, corr_id: corr_id}
 )
 
-# On response
+# On response (retrieve from request map)
+%{started_at_mono: start_time} = request
+duration = System.monotonic_time() - start_time  # Monotonic for accuracy
+
 :telemetry.execute(
   [:mcp_client, :request, :stop],
-  %{duration: System.monotonic_time() - start_time},
+  %{duration: duration},  # Native time units
   %{client: self(), method: method, id: id, corr_id: corr_id}
 )
 ```
+
+**Note:** Use `System.monotonic_time()` for duration calculation (immune to clock adjustments). Use `System.system_time()` only for wall-clock timestamps in logs/telemetry.
 
 ---
 
 ## Invariants (Always True)
 
 1. **Exactly one state at a time**: Process is always in one of 5 states
-2. **No orphaned requests**: Every request in map has corresponding timeout
-3. **Tombstones have TTL**: Every tombstone entry has `inserted_at` and `ttl`
-4. **Transport active-once**: Transport never delivers frame unless `set_active(:once)` called
+2. **No orphaned requests**: Every request in map has corresponding timeout; every retry in map will eventually complete or be cleared
+3. **Tombstones have TTL**: Every tombstone entry has `inserted_at_mono` and `ttl_ms`
+4. **Transport active-once**: Transport never delivers frame unless `set_active(:once)` called; in `:backoff` and `:closing`, `set_active` is not called
 5. **One terminal outcome per request**: Each caller receives exactly one reply (success, error, or timeout)
+6. **Time source consistency**:
+   - **Monotonic time (native)** (`System.monotonic_time()`) for request durations and timeout actions
+   - **Monotonic time (millisecond)** (`System.monotonic_time(:millisecond)`) for tombstone TTL and backoff calculations
+   - **System time** (`System.system_time()`) only for telemetry event wall-clock timestamps
+   - Never mix units: comparisons only within same unit; convert at boundaries if needed
+7. **No set_active after close**: When oversized frame triggers close, or stop is called, `set_active(:once)` is never called after `Transport.close/1`
 
 ---
 

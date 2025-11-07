@@ -125,6 +125,11 @@ We explicitly **prioritize stability over fairness** under mixed large/small fra
 
 ## Deferred Alternatives
 
+**Unknown response ID logging (post-MVP)**: Currently logged at `:debug` level. If volume becomes high during reconnection storms, consider:
+- Sample logging (log 1 in N unknown IDs)
+- Rate limiting (max N logs per minute)
+- Counter-based (log + increment counter, emit telemetry)
+
 **Offload decode pool (post-MVP)**: If profiling shows decode blocking is a real issue:
 - Add `decode_threshold_bytes` config (e.g., 128KB)
 - Frames > threshold decoded in Task.Supervisor

@@ -70,73 +70,97 @@ end
 # Example: jitter(10, 0.5) → 5-15ms
 ```
 
+**Data structure (per-request retry tracking):**
+```elixir
+defstruct [
+  # ... other fields
+  retries: %{}  # %{id => %{frame, from, request, attempts}}
+]
+```
+
 **Initial send attempt:**
 ```elixir
 def handle_event({:call, from}, {:call_tool, name, args, opts}, :ready, data) do
   id = next_id()
   frame = encode_request(id, "tools/call", %{name: name, arguments: args})
+  timeout = opts[:timeout] || @default_timeout
+
+  corr_id = :crypto.strong_rand_bytes(8)  # For tracing
+
+  request = %{
+    from: from,
+    method: "tools/call",
+    started_at_mono: System.monotonic_time(),
+    timeout: timeout,  # ← Store per-call timeout
+    corr_id: corr_id   # For telemetry/tracing
+  }
 
   case Transport.send_frame(data.transport, frame) do
     :ok ->
-      # Success - start request timeout
-      request = %{from: from, method: "tools/call", ...}
+      # Success - store request and start timeout
       data = put_in(data.requests[id], request)
-      actions = [{:state_timeout, opts[:timeout] || 30_000, {:request_timeout, id}}]
+      actions = [{:state_timeout, timeout, {:request_timeout, id}}]
       {:keep_state, data, actions}
 
     {:error, :busy} ->
-      # First failure - schedule retry
-      retry_state = %{id: id, frame: frame, from: from, attempts: 1}
-      data = Map.put(data, :retry, retry_state)
+      # First failure - schedule retry for THIS id
+      retry_state = %{frame: frame, from: from, request: request, attempts: 1}
+      data = put_in(data.retries[id], retry_state)
       delay = jitter(@retry_delay_ms, @retry_jitter)
-      actions = [{:state_timeout, delay, :retry_send}]
+      actions = [{:state_timeout, delay, {:retry_send, id}}]  # ← id is keyed
       {:keep_state, data, actions}
 
     {:error, reason} ->
       # Fatal error - fail immediately
-      reply = {:reply, from, {:error, %Error{kind: :transport, message: "send failed"}}}
-      {:keep_state, data, [reply]}
+      error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
+      {:keep_state, data, [{:reply, from, {:error, error}}]}
   end
 end
 ```
 
-**Retry handler:**
+**Retry handler (per-id):**
 ```elixir
-def handle_event(:state_timeout, :retry_send, :ready, data) do
-  %{id: id, frame: frame, from: from, attempts: attempts} = data.retry
+def handle_event(:state_timeout, {:retry_send, id}, :ready, data) do
+  case Map.get(data.retries, id) do
+    nil ->
+      # Retry state was cleared (e.g., during stop) - ignore
+      {:keep_state, data}
 
-  case Transport.send_frame(data.transport, frame) do
-    :ok ->
-      # Retry succeeded - start request tracking
-      request = %{from: from, ...}
-      data = data
-             |> Map.delete(:retry)
-             |> put_in([:requests, id], request)
-      actions = [{:state_timeout, 30_000, {:request_timeout, id}}]
-      {:keep_state, data, actions}
+    %{frame: frame, from: from, request: request, attempts: attempts} ->
+      case Transport.send_frame(data.transport, frame) do
+        :ok ->
+          # Retry succeeded - promote to tracked request
+          data = data
+                 |> Map.update!(:retries, &Map.delete(&1, id))
+                 |> put_in([:requests, id], request)
+          # Use stored timeout (preserves per-call override)
+          timeout = request.timeout
+          actions = [{:state_timeout, timeout, {:request_timeout, id}}]
+          {:keep_state, data, actions}
 
-    {:error, :busy} when attempts < @retry_attempts ->
-      # Still busy, retry again
-      data = put_in(data.retry.attempts, attempts + 1)
-      delay = jitter(@retry_delay_ms, @retry_jitter)
-      actions = [{:state_timeout, delay, :retry_send}]
-      {:keep_state, data, actions}
+        {:error, :busy} when attempts < @retry_attempts ->
+          # Still busy, retry again
+          data = put_in(data.retries[id].attempts, attempts + 1)
+          delay = jitter(@retry_delay_ms, @retry_jitter)
+          actions = [{:state_timeout, delay, {:retry_send, id}}]
+          {:keep_state, data, actions}
 
-    {:error, :busy} ->
-      # Exhausted retries - fail with backpressure error
-      data = Map.delete(data, :retry)
-      error = %Error{
-        kind: :transport,
-        message: "transport busy after #{@retry_attempts} attempts",
-        data: %{retries: attempts}
-      }
-      {:keep_state, data, [{:reply, from, {:error, error}}]}
+        {:error, :busy} ->
+          # Exhausted retries - fail with backpressure error
+          data = Map.update!(data, :retries, &Map.delete(&1, id))
+          error = %Error{
+            kind: :transport,
+            message: "transport busy after #{@retry_attempts} attempts",
+            data: %{retries: attempts}
+          }
+          {:keep_state, data, [{:reply, from, {:error, error}}]}
 
-    {:error, reason} ->
-      # Fatal error
-      data = Map.delete(data, :retry)
-      error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
-      {:keep_state, data, [{:reply, from, {:error, error}}]}
+        {:error, reason} ->
+          # Fatal error
+          data = Map.update!(data, :retries, &Map.delete(&1, id))
+          error = %Error{kind: :transport, message: "send failed: #{inspect(reason)}"}
+          {:keep_state, data, [{:reply, from, {:error, error}}]}
+      end
   end
 end
 ```
@@ -160,11 +184,14 @@ end
 - Minimal memory (single retry state in Connection data)
 
 **Negative/Risks:**
-- Only one request can be in retry at a time (MVP limitation)
-  - If send fails during retry, new request must wait or also fail
-  - Acceptable for MVP (rare to have sustained transport saturation)
-- Retry delay blocks new requests (Connection is in `:ready` but processing retry)
-  - Mitigated by: short delay (10ms), jittered to avoid thundering herd
+- Retry state consumes memory per concurrent busy request
+  - Each in-retry request stores **full frame binary** + metadata
+  - Worst case: N concurrent retries × frame size (up to 16MB per frame)
+  - Bounded by total concurrent requests (typically < 100)
+  - Post-MVP optimization: reconstruct frame from `{id, method, params}` instead of storing binary
+- Multiple concurrent retries can fire simultaneously
+  - If N requests all hit `:busy`, N retry timers scheduled
+  - Acceptable: jitter spreads them out, retry count is bounded
 
 **Neutral:**
 - Retry count and delay are fixed (not configurable in MVP)
@@ -226,7 +253,57 @@ config :mcp_client,
 - MVP uses uniform policy for all requests
 - No evidence yet that different methods need different strategies
 
+## Interaction with Shutdown
+
+**Critical race condition:** When `stop/1` is called, in-flight retries must be cancelled to prevent:
+- Retry timer firing after shutdown
+- Duplicate replies to callers (shutdown error + retry result)
+
+**Solution:** On entering `:closing` state:
+1. Clear `data.retries` map (all retry state discarded)
+2. Retry handlers check if `id` exists in `retries` before processing
+3. If missing, return early (no-op)
+
+**Implementation:**
+```elixir
+def handle_event({:call, from}, :stop, :ready, data) do
+  # Fail all in-flight requests
+  # ... (see ADR-0009)
+
+  # Clear retry state to cancel pending retry timers
+  data = %{data | retries: %{}}
+
+  {:next_state, :closing, data, [{:reply, from, {:ok, :ok}}]}
+end
+
+# In :closing state, ignore retry events
+def handle_event(:state_timeout, {:retry_send, _id}, :closing, data) do
+  {:keep_state, data}  # Drop, already shutting down
+end
+```
+
+See ADR-0009 for complete shutdown semantics.
+
 ## Testing
+
+**Unit test: Concurrent retries don't interfere**
+```elixir
+test "multiple concurrent requests can retry independently" do
+  # Mock transport: :busy for first 2 sends to each request
+  task1 = Task.async(fn -> McpClient.call_tool(client, "op1", %{}) end)
+  task2 = Task.async(fn -> McpClient.call_tool(client, "op2", %{}) end)
+
+  # Both should succeed after retry
+  assert {:ok, _} = Task.await(task1)
+  assert {:ok, _} = Task.await(task2)
+
+  # Each got exactly 2 send attempts (initial + 1 retry)
+  assert_received {:transport_send, _frame1}
+  assert_received {:transport_send, _frame2}
+  assert_received {:transport_send, _frame1}  # Retry 1
+  assert_received {:transport_send, _frame2}  # Retry 2
+end
+```
 
 **Unit test: Retry success on second attempt**
 ```elixir

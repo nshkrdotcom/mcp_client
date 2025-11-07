@@ -44,7 +44,7 @@ The client must enforce a reasonable maximum frame size and handle violations sa
 
 Chosen option: **16MB hard limit, close connection (Option 2)**, because:
 
-1. **Safe default**: 16MB aligns with HTTP/2 default MAX_FRAME_SIZE (16,384 KB) and most JSON-RPC implementations
+1. **Safe default**: 16MB provides a generous ceiling for JSON-RPC; HTTP/2's default frame size is 16KB, and we're 1000x more permissive for large payloads
 2. **Simple implementation**: Check `byte_size(frame)` before decode
 3. **Clear failure mode**: Oversized frame = protocol violation = close connection
 4. **No parsing required**: Don't attempt to extract `id` from unsafe payload
@@ -126,7 +126,7 @@ end
 **16MB provides:**
 - Room for large but legitimate payloads
 - Protection against obviously malicious/broken servers
-- Alignment with common RPC limits (gRPC default: 4MB, HTTP/2: 16KB-16MB range)
+- Alignment with common RPC limits (gRPC default: 4MB; we're generous compared to HTTP/2's 16KB default)
 
 **Examples that fit:**
 - 10MB text file encoded in JSON string

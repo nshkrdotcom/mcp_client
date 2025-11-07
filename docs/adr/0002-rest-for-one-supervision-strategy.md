@@ -45,6 +45,13 @@ Chosen option: **rest_for_one without explicit links**, because:
 
 ### Implementation Details
 
+**Transport contract:** All transport implementations **must** emit exactly the message shapes defined in `docs/design/STATE_TRANSITIONS.md` under "Transport Message Contract":
+- `{:transport, :up}` - exactly once after ready
+- `{:transport, :frame, binary()}` - only after `set_active(:once)`
+- `{:transport, :down, reason}` - on any failure
+
+See STATE_TRANSITIONS.md for complete requirements.
+
 **Supervision tree:**
 ```elixir
 defmodule McpClient.ConnectionSupervisor do

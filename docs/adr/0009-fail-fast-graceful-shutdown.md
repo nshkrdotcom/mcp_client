@@ -55,9 +55,15 @@ Chosen option: **Fail-fast immediate failure (Option 2)**, because:
 ```elixir
 @spec stop(client(), timeout()) :: :ok
 def stop(client, timeout \\ 5000) do
-  GenServer.call(client, :stop, timeout)
+  # Internal call returns {:ok, :ok} or {:ok, :already_closing}
+  # Public API normalizes to :ok for simplicity (idempotent)
+  case GenServer.call(client, :stop, timeout) do
+    {:ok, _} -> :ok
+  end
 end
 ```
+
+**Return value:** Always `:ok` (idempotent). Internally, Connection replies with `{:ok, :ok}` (first stop) or `{:ok, :already_closing}` (subsequent), but public API normalizes both to `:ok`.
 
 **Transition to `:closing` from any state:**
 
@@ -86,8 +92,16 @@ def handle_event({:call, from}, :stop, :ready, data) do
     GenServer.reply(req_from, {:error, shutdown_error})
   end
 
+  # Fail all in-retry requests
+  for {id, %{from: req_from}} <- data.retries do
+    GenServer.reply(req_from, {:error, shutdown_error})
+  end
+
   # Tombstone IDs to prevent late responses
   data = tombstone_all_requests(data)
+
+  # Clear retry state to cancel pending retry timers
+  data = %{data | retries: %{}}
 
   # Close transport
   Transport.close(data.transport)
@@ -112,6 +126,16 @@ end
 ```elixir
 def handle_event({:call, from}, :stop, :closing, data) do
   {:keep_state, data, [{:reply, from, {:ok, :already_closing}}]}
+end
+
+# Ignore retry timers that fire after entering :closing
+def handle_event(:state_timeout, {:retry_send, _id}, :closing, data) do
+  {:keep_state, data}  # Drop silently
+end
+
+# Ignore request timeouts that fire after entering :closing
+def handle_event(:state_timeout, {:request_timeout, _id}, :closing, data) do
+  {:keep_state, data}  # Drop silently
 end
 ```
 
