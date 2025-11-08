@@ -50,6 +50,17 @@ Architecture for high-level MCP feature APIs (Tools, Resources, Prompts, Samplin
 **[ADR-0012: Tool Modes and Session Flexibility](0012-tool-modes-and-session-flexibility.md)**
 Defines per-tool execution modes (stateful vs. stateless), optional session semantics, and the requirement for registry-backed multi-connection supervision so the client can scale beyond single-instance transports.
 
+### Extensibility & Roadmap
+
+**[ADR-0013: Pluggable State Store and Registry Adapters](0013-pluggable-state-store-and-registry-adapters.md)**
+Records the plan for shipping adapter behaviours so request/tombstone storage and connection registries can move to ETS, Redis, Horde, or custom implementations without rewriting the core FSM.
+
+**[ADR-0014: Transport Customization and HTTP Client Overrides](0014-transport-customization-and-http-client-overrides.md)**
+Documents the transport plug-in contract, including how custom transports and Finch/HTTP client overrides integrate with the supervisor tree.
+
+**[ADR-0015: Asynchronous Notification Dispatch Roadmap](0015-async-notification-dispatch-roadmap.md)**
+Explains why synchronous handlers remain for MVP (ADR-0006) and how the optional async/Task.Supervisor mode will be introduced post-MVP.
+
 ## Reading Order
 
 For new contributors or implementers:
@@ -122,6 +133,6 @@ When proposing changes to architectural decisions:
 
 ---
 
-**Last Updated**: 2025-11-07
-**ADR Count**: 11
+**Last Updated**: 2025-11-10
+**ADR Count**: 15
 **Status**: Locked for MVP
