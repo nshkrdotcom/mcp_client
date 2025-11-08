@@ -125,6 +125,11 @@ defp invoke_notification_handlers(data, notification) do
 end
 ```
 
+### ADR-0012: Tool Modes & Session Flexibility
+
+- **Session metadata**: Only include `meta: %{session_id: data.session_id}` in outgoing requests when `data.session_mode == :required`. Stateless-only connections leave `meta` nil to avoid session overhead.
+- **Tool map maintenance**: After a successful `tools/list` response, rebuild `data.tool_modes` from the payload and recompute `data.session_mode` (`:required` if any tool reports `"mode": "stateful"`, otherwise `:optional`). This allows later prompts to route stateless tools through isolated request processes.
+
 ---
 
 ## Implementation Requirements

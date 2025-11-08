@@ -38,6 +38,7 @@ The MVP must balance **completeness** (usable for real applications) with **simp
 - ✅ **Resources**: list, read, subscribe, unsubscribe, list templates
 - ✅ **Prompts**: list, get (with arguments)
 - ✅ **Tools**: list, call (with arguments)
+- ✅ **Tool modes**: per-tool `:stateful | :stateless` declarations with optional session-less execution (ADR-0012)
 - ✅ **Sampling**: create_message (LLM completions)
 - ✅ **Roots**: list roots, handle roots list requests
 - ✅ **Logging**: set log level, receive log notifications
@@ -54,6 +55,7 @@ The MVP must balance **completeness** (usable for real applications) with **simp
 **Included in MVP:**
 - ✅ gen_statem-based connection lifecycle (see ADR-0001)
 - ✅ Supervision tree with rest_for_one strategy (see ADR-0002)
+- ✅ Registry-backed connection naming (`:name` must be atom or `{:via, Registry, ...}`; helpers provided)
 - ✅ Graceful shutdown under supervisor (see ADR-0009)
 - ✅ Named processes (`:name` option)
 - ✅ Standard child_spec for supervision trees
@@ -63,6 +65,7 @@ The MVP must balance **completeness** (usable for real applications) with **simp
 **Included in MVP:**
 - ✅ Exponential backoff with jitter on connection failure
 - ✅ Per-request timeouts with cancellation
+- ✅ Optional session tracking (session IDs only when stateful tools are in play)
 - ✅ Active-once backpressure (see ADR-0004)
 - ✅ Tombstone-based late response filtering (see ADR-0005)
 - ✅ Bounded send retry for transport busy (see ADR-0007)
@@ -136,7 +139,7 @@ The MVP must balance **completeness** (usable for real applications) with **simp
   - **Post-MVP trigger**: MCP spec adds streaming extension
 
 - ❌ **Multiplexing**: Multiple logical channels over one transport
-  - **Why deferred**: One connection = one logical session for MVP
+  - **Why deferred**: Even with optional sessions, a single connection still carries one conversation
   - **Post-MVP trigger**: Protocol optimization needs
 
 - ❌ **Compression**: gzip/deflate for large payloads
@@ -215,7 +218,7 @@ Post-MVP work is about **tooling** (code generation) and **optimization** (progr
 
 **Deferred:**
 - ❌ **Shared subscription registry**: Coordinate resource subscriptions across multiple clients
-  - **Why deferred**: One client = one connection for MVP
+  - **Why deferred**: Connection registry now exists per ADR-0012, but higher-level cross-connection coordination remains app-specific
   - **Post-MVP trigger**: Application needs cross-client coordination
 
 - ❌ **Client identity persistence**: Restore client identity after restart

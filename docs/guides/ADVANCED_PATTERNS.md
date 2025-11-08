@@ -472,7 +472,7 @@ end
 
 ### Connection Registry
 
-**Pattern:** Register connections for lookup by key.
+**Pattern:** Register connections for lookup by key. Per ADR-0012 this is no longer optional—multi-connection deployments **must** register each connection (atom or `:via`) so transports and notification routers can locate the proper process.
 
 ```elixir
 defmodule MyApp.MCP.Registry do

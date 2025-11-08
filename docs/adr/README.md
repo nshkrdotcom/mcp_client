@@ -45,6 +45,11 @@ Complete definition of what's included vs. deferred in MVP. Covers protocol feat
 **[ADR-0011: Client Features Architecture](0011-client-features-architecture.md)**
 Architecture for high-level MCP feature APIs (Tools, Resources, Prompts, Sampling, Roots, Logging) built on top of core connection layer. Defines clean API boundary, error normalization, notification routing, and incremental implementation strategy.
 
+### Tool Modes & Sessions
+
+**[ADR-0012: Tool Modes and Session Flexibility](0012-tool-modes-and-session-flexibility.md)**
+Defines per-tool execution modes (stateful vs. stateless), optional session semantics, and the requirement for registry-backed multi-connection supervision so the client can scale beyond single-instance transports.
+
 ## Reading Order
 
 For new contributors or implementers:

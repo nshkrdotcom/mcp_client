@@ -32,6 +32,8 @@ The state machine has 5 states:
 %{
   transport: pid() | nil,
   session_id: non_neg_integer(),
+  session_mode: :required | :optional,
+  tool_modes: %{String.t() => :stateful | :stateless},
   server_caps: map() | nil,
   requests: %{id => %{from, started_at_mono, timeout, method, corr_id}},
   retries: %{id => %{frame, from, request, attempts}},
@@ -44,6 +46,8 @@ The state machine has 5 states:
   notification_handlers: [function()]
 }
 ```
+
+`session_mode` defaults to `:optional` and flips to `:required` once a stateful tool appears. `tool_modes` caches the server’s `mode` declarations so later prompts can make dispatch decisions without re-querying.
 
 ### Configuration Defaults (from MVP_SPEC.md)
 

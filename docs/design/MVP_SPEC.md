@@ -1,7 +1,7 @@
 # MCP Client Library - MVP Specification
 
-**Version:** 1.0.0-mvp
-**Date:** 2025-11-06
+**Version:** 1.1.0-mvp
+**Date:** 2025-11-08
 **Status:** Locked for Implementation
 
 ---
@@ -36,12 +36,14 @@ See `docs/adr/` for detailed rationale behind each decision.
 ```
 ConnectionSupervisor (rest_for_one)
   ├─ Transport (worker)
+  ├─ StatelessSupervisor (Task.Supervisor)  # for :stateless tool execution
   └─ Connection (worker)
 ```
 - See: ADR-0002
 - Supervisor always starts Transport first, Connection second
 - Connection never spawns its own transport; it receives the PID in `init/1`
 - Failure cascade: if Transport dies, both children restart; if Connection dies, only Connection restarts
+- Stateless task supervisor is placed between Transport and Connection so it restarts alongside Connection but does not take the transport down on crash.
 
 ### 1.2 State Machine
 
@@ -57,6 +59,8 @@ ConnectionSupervisor (rest_for_one)
 %{
   transport: pid(),
   session_id: non_neg_integer(),
+  session_mode: :required | :optional,
+  tool_modes: %{String.t() => :stateful | :stateless},
   requests: %{id => request_meta},
   retries: %{id => retry_meta},
   tombstones: %{id => tombstone_meta},
@@ -66,7 +70,15 @@ ConnectionSupervisor (rest_for_one)
 }
 ```
 
+`session_mode` starts at `:optional` and flips to `:required` automatically whenever a server advertises at least one stateful tool. `tool_modes` caches the server-supplied metadata from `tools/list` so the Connection can decide how to dispatch each invocation (ADR-0012).
+
 **Full transition table:** See `docs/design/STATE_TRANSITIONS.md`
+
+### 1.3 Connection Registry & Multi-Connection Support
+
+- Every connection **must** be registered via an atom or `{:via, Registry, {module(), term()}}` tuple so supervisors and transports can locate the correct process in multi-client deployments.
+- Guides document a canonical `MyApp.MCP.ConnectionRegistry` wrapper that supervisors should start alongside the client (`docs/guides/ADVANCED_PATTERNS.md`).
+- Transports receive the registered connection name during `start_link/1` and never assume singleton processes, satisfying the community request for N:1 server support.
 
 ---
 
@@ -165,7 +177,7 @@ defp next_id(), do: System.unique_integer([:positive, :monotonic])
     retry_ref: reference() | nil,      # Busy send retry timer (if armed)
     started_at_mono: integer(),        # System.monotonic_time()
     method: String.t(),                # For telemetry
-    session_id: non_neg_integer()      # For stale filtering (post-MVP)
+    session_id: non_neg_integer()      # Captured when session_mode == :required (for stale filtering)
   }
 }
 ```
@@ -198,6 +210,7 @@ defp next_id(), do: System.unique_integer([:positive, :monotonic])
 5. Connection sends JSON-RPC frame via `Transport.send_frame/2`
    - On `{:error, :busy}`, retry up to 3 times via retry timers (ADR-0007)
    - On fatal error, remove metadata, cancel timer, reply error immediately
+   - `meta.session_id` is included only when `session_mode == :required` (ADR-0012)
 6. Response arrives: cancel timer, deliver to caller, clear metadata
 7. Timeout message arrives: cancel upstream, tombstone ID, reply error
 ```
@@ -239,6 +252,21 @@ end
 - Re-initialization occurs only after transport failure, oversized frames, or explicit Connection shutdown.
 - If a server sends a second `"initialize"` request, we treat it as a protocol violation and log at `:warning`, then transition to `:backoff`.
 - Future negotiated reset behavior will require a capability flag and an ADR.
+
+### 3.7 Tool Dispatch Modes (ADR-0012)
+
+Tool invocations follow the `mode` declared by the server (see ADR-0012):
+
+- `:stateless`
+  - Executed inside a short-lived request process (`Task.Supervisor` child) so long-running work never blocks the Connection.
+  - Requests omit `meta.session_id` when `session_mode == :optional`.
+  - Results are pushed back into the Connection for delivery so timeout/tombstone logic remains centralized.
+- `:stateful`
+  - Executed directly inside the Connection. Requests always include `meta.session_id`.
+  - Connection refuses to execute if the server has not completed initialization or if a session cannot be established.
+- **Mode switching**
+  - When `tools/list` arrives, `tool_modes` is rebuilt and `session_mode` recomputed (`:required` if *any* tool is stateful).
+  - Stateless calls inherit session metadata when `session_mode == :required` to keep telemetry consistent even though they execute in isolated processes.
 
 ---
 
@@ -687,7 +715,7 @@ on_progress(client(), handler :: (map() -> any())) :: :ok
 
 | Module | Functions | Capability guard |
 |--------|-----------|------------------|
-| `McpClient.Tools` | `list/2`, `call/4` | `server_caps.tools? == true` |
+| `McpClient.Tools` | `list/2`, `call/4` (Tool struct exposes `mode`) | `server_caps.tools? == true` |
 | `McpClient.Resources` | `list/2`, `read/3`, `subscribe/2`, `unsubscribe/2`, `list_templates/1` | `server_caps.resources? == true` |
 | `McpClient.Prompts` | `list/1`, `get/3` | `server_caps.prompts? == true` |
 | `McpClient.Sampling` | `create_message/2` | `server_caps.sampling? == true` |
@@ -713,6 +741,7 @@ on_progress(client(), handler :: (map() -> any())) :: :ok
   init_timeout: timeout(),
   backoff_min: non_neg_integer(),
   backoff_max: non_neg_integer(),
+  stateless_supervisor: module() | {module(), keyword()},  # Defaults to internal Task.Supervisor
 
   # Stdio transport opts (subset)
   cmd: String.t(),
@@ -724,6 +753,8 @@ on_progress(client(), handler :: (map() -> any())) :: :ok
   # SSE/HTTP transports add url/header-specific keys
 ]
 ```
+
+Always pass a `:name` when starting supervised connections. Multi-connection applications should favor `{:via, Registry, {MyApp.MCP.Registry, key}}` so transports and helper processes can find the correct Connection PID without global singletons (see Section 1.3).
 
 **call_*/N options:**
 ```elixir
@@ -751,7 +782,7 @@ All request/response examples in this doc use **string keys** (matching JSON) ev
 - ❌ Streaming/chunking
 - ❌ Request replay after reconnect
 
-**Rationale:** MVP focuses on mechanical correctness for single-connection scenarios. Post-MVP optimizes for scale and advanced use cases.
+**Rationale:** MVP still prioritizes mechanical correctness, but with ADR-0012 we now include the registry + tool-mode groundwork so multi-connection deployments and stateless sessions are first-class. Post-MVP continues to optimize for scale and advanced capabilities (pooling, session ID gating, etc.).
 
 ---
 

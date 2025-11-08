@@ -50,6 +50,7 @@ From MVP_SPEC.md and ADRs:
   command: "npx",                 # Required for :stdio
   args: ["-y", "@modelcontextprotocol/server-everything"],
   env: [],                        # Optional environment variables
+  name: {:via, Registry, {MyApp.MCP.Registry, term()}}, # Required for supervised use
 
   # Timeouts
   request_timeout: 30_000,        # Default: 30 seconds
@@ -69,9 +70,12 @@ From MVP_SPEC.md and ADRs:
 
   # Advanced
   max_frame_bytes: 16_777_216,    # Default: 16MB
-  tombstone_sweep_ms: 60_000      # Default: 60 seconds
+  tombstone_sweep_ms: 60_000,     # Default: 60 seconds
+  stateless_supervisor: McpClient.StatelessSupervisor # Override isolated-task supervisor
 ]
 ```
+
+All public helpers should ensure a registered name exists. If the caller omits `:name`, default to `{:via, Registry, {McpClient.ConnectionRegistry, System.unique_integer()}}` so downstream transports can resolve the Connection even in multi-client deployments.
 
 ### Return Values
 
@@ -169,12 +173,13 @@ defmodule McpClient do
   - `:command` - (required for stdio) Command to execute
   - `:args` - Command arguments (default: [])
   - `:env` - Environment variables (default: [])
-  - `:name` - Optional registered name for the connection
+  - `:name` - Registered name (atom or `{:via, Registry, ...}`); default to ConnectionRegistry slot if omitted
   - `:request_timeout` - Request timeout in ms (default: 30_000)
   - `:init_timeout` - Initialize timeout in ms (default: 10_000)
   - `:backoff_min` - Minimum backoff delay in ms (default: 1_000)
   - `:backoff_max` - Maximum backoff delay in ms (default: 30_000)
   - `:notification_handlers` - List of notification handler functions (default: [])
+  - `:stateless_supervisor` - Optional `{module, term}` to override Task.Supervisor for stateless tool executions
 
   ## Examples
 

@@ -87,7 +87,7 @@ See ADR-0002 and ADR-0004 for transport behavior specification.
 |-------|-------------|--------|------------|
 | `{:info, {:transport, :up}}` | - | Send `initialize` request **then** set_active(:once); arm init_timeout | `:initializing` |
 | `{:info, {:transport, :frame, binary}}` | `byte_size > max_frame_bytes` | Log error; close transport (no set_active); schedule backoff | `:backoff` |
-| `{:info, {:transport, :frame, binary}}` | Valid init response, caps valid | Store caps; bump session_id; **reset backoff_delay to backoff_min**; reply "initialized"; arm tombstone sweep; set_active(:once) | `:ready` |
+| `{:info, {:transport, :frame, binary}}` | Valid init response, caps valid | Store caps; bump session_id; set `session_mode = :optional`; **reset backoff_delay to backoff_min**; reply "initialized"; arm tombstone sweep; set_active(:once) | `:ready` |
 | `{:info, {:transport, :frame, binary}}` | Valid init response, caps **invalid** | Log warn; close transport; schedule backoff | `:backoff` |
 | `{:info, {:transport, :frame, binary}}` | Init error response | Log error; close transport; schedule backoff | `:backoff` |
 | `{:info, {:transport, :frame, binary}}` | Invalid JSON | Log warn; set_active(:once) | `:initializing` |
@@ -134,13 +134,17 @@ defp compatible_version?(_), do: false
 | `{:info, {:req_timeout, id}}` | ID in `requests` | Send `$/cancelRequest` (single attempt, no retry); tombstone ID; reply timeout | `:ready` |
 | `{:info, {:req_timeout, id}}` | ID not in `requests` | Ignore (already handled) | `:ready` |
 | `{:state_timeout, :sweep_tombstones}` | - | Remove expired tombstones; reschedule sweep | `:ready` |
-| `{:call, from, {:call_tool, name, args, opts}}` | - | Generate ID; send frame (with retry on :busy); store request or retry state; arm timeout | `:ready` |
+| `{:call, from, {:call_tool, name, args, opts}}` | - | Lookup `mode = Map.get(tool_modes, name, :stateful)`; dispatch via `handle_tool_call/5` (stateless → Task.Supervisor, stateful → inline); include session metadata only when `session_mode == :required`; arm timeout | `:ready` |
 | `{:call, from, {:list_resources, opts}}` | - | Same as above | `:ready` |
 | `{:call, from, ...}` | Any other user call | Same pattern | `:ready` |
 | `{:call, from, :stop}` | - | Reply `{:ok, :ok}`; fail all in-flight + retries; tombstone all; clear retries; close | `:closing` |
 | `{:info, {:retry_send, id, frame}}` | ID in `retries`; attempts < max | Retry send_frame; on success: promote to request; on `{:error, :busy}`: increment attempts, reschedule | `:ready` |
 | `{:info, {:retry_send, id, _frame}}` | ID in `retries`; attempts >= max | Reply `{:error, :backpressure}`; delete from retries | `:ready` |
 | `{:info, {:retry_send, id, _frame}}` | ID not in `retries` | Ignore (cleared during stop) | `:ready` |
+
+**Tool mode bookkeeping (ADR-0012)**
+- After every successful `tools/list`, rebuild `tool_modes` and recompute `session_mode` (`:required` if *any* tool is stateful, otherwise `:optional`).
+- Stateless tool executions run inside `Task.Supervisor` workers while the Connection still tracks their request IDs for timeout/tombstone logic.
 
 **Cancellation policy:**
 - `$/cancelRequest` is sent as **single attempt, no retry**

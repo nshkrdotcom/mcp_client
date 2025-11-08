@@ -58,6 +58,10 @@ end
 
 Each feature module calls `ensure_capability/2` (or its module-local equivalent) before delegating to `Connection.call/4`.
 
+### 6. Tool Execution Modes
+
+The tools feature exposes whether a definition must run inside the shared session (`:stateful`) or can run in an isolated request process (`:stateless`). The Connection engages session tracking only when at least one stateful tool is available; otherwise, calls skip `session_id` metadata entirely. ADR-0012 details how this feeds back into the state machine.
+
 ---
 
 ## Dual Usage Pattern Support
@@ -141,6 +145,13 @@ This design ensures:
 2. **Mix patterns** in same application (Direct for simple servers, Code for complex)
 3. **Server compatibility** - servers see identical requests either way
 
+### Session Behavior and Tool Modes
+
+- When *all* tools are `:stateless`, the connection runs in **session-optional** mode: `session_id` metadata is omitted, and each tool call executes inside an isolated request process for fault containment.
+- When **any** tool is `:stateful`, the connection flips into **session-required** mode: every request (including stateless ones) carries the current `session_id`, and stateful calls execute inside the Connection process to access shared transport state.
+- Switching modes happens automatically whenever the server updates its tool list; no application code changes are required.
+- Stateless executions use the dedicated `Task.Supervisor` started alongside the connection (override via `:stateless_supervisor` option) so CPU-heavy work never blocks the Connection mailbox.
+
 ---
 
 ## Feature Modules
@@ -167,6 +178,7 @@ defmodule Tool do
     field :name, String.t(), enforce: true
     field :description, String.t()
     field :inputSchema, map(), enforce: true  # JSON Schema
+    field :mode, atom(), default: :stateful   # :stateful | :stateless
   end
 end
 
@@ -191,7 +203,7 @@ end
 **Example:**
 ```elixir
 {:ok, tools} = McpClient.Tools.list(conn)
-# [%McpClient.Tools.Tool{name: "search", description: "Search files", ...}]
+# [%McpClient.Tools.Tool{name: "search", description: "Search files", mode: :stateless, ...}]
 
 {:ok, result} = McpClient.Tools.call(conn, "search", %{query: "TODO"})
 # %McpClient.Tools.CallResult{content: [...], isError: false}

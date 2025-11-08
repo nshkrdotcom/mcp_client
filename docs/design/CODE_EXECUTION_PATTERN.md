@@ -10,9 +10,9 @@ As MCP adoption scales, agents connecting to hundreds or thousands of tools face
 1. **Tool definitions overload context** - Loading all tool definitions upfront consumes excessive tokens
 2. **Intermediate results consume tokens** - Every tool result flows through the model's context window
 
-The **code execution pattern** addresses both challenges by treating MCP servers as code APIs rather than direct tool calls. Instead of loading all tools upfront and orchestrating every call through the model, agents write code that interacts with MCP servers programmatically.
+The **code execution pattern** addresses both challenges by treating MCP servers as code APIs rather than direct tool calls. Instead of loading all tools upfront and orchestrating every call through the model, agents write code that interacts with MCP servers programmatically. Tool definitions now advertise a `mode` so the runtime can decide whether each call needs shared session state or can execute in a stateless request.
 
-**Key Insight:** Our MCP Client is the foundation layer that enables both patterns.
+**Key Insight:** Our MCP Client is the foundation layer that enables both patterns *and* exposes tool mode metadata so the execution layer knows when it can avoid session overhead.
 
 ---
 
@@ -136,7 +136,7 @@ transcript = doc.content  # Full 50K token transcript in memory, NOT in model co
 IO.puts("Updated successfully")  # Model sees: "Updated successfully" (3 tokens)
 ```
 
-**Token usage:** ~2K tokens (98.7% reduction!)
+Stateless tools in this pattern execute via the isolated request supervisor, so optional sessions remain disabled unless a stateful tool surfaces. **Token usage:** ~2K tokens (98.7% reduction!)
 
 ---
 
@@ -191,6 +191,7 @@ MCPServers.GoogleDrive.search(conn, "test")
 - Connection management (state machine, backoff, retry)
 - Error handling and normalization
 - Request/response correlation
+- Tool mode metadata (stateless callers can stay sessionless)
 
 ### Dual-Use Client Features
 

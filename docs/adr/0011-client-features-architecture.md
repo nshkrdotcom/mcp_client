@@ -15,6 +15,7 @@ We must decide how to structure these client features on top of the core, balanc
 - **Extensibility**: Easy to add new MCP features as spec evolves
 - **Isolation**: Clean separation between core and features (avoid spaghetti)
 - **Error handling**: Consistent, informative error reporting
+- **Execution clarity**: Ability to represent whether a tool needs shared session state
 
 Without a clear architecture, we risk:
 - Tight coupling between features and core (hard to maintain)
@@ -96,6 +97,15 @@ Chosen option: **Separate feature modules with shared core (Option 2)**, because
 4. **Type safety**: Each module can define feature-specific structs and validation
 5. **Testable**: Each feature module can be tested independently with mock connections
 6. **Discoverable**: `h McpClient.Tools` shows all tool-related functions
+
+### Per-Tool Execution Modes
+
+Community feedback highlighted the need to distinguish tools that require shared session state (e.g., long-running SSE streams) from those that do not. Feature modules therefore treat `mode` as a first-class property:
+
+- `:stateful` (default) tools execute inside the Connection process and rely on the negotiated session.
+- `:stateless` tools execute in an isolated request process/task. When *all* tools on a connection are stateless, the Connection can run without maintaining a session ID.
+
+The feature layer surfaces this metadata via typed structs so library users can reason about execution without touching the core protocol machinery. ADR-0012 covers how the Connection responds to these declarations.
 
 ### Implementation Structure
 
@@ -188,7 +198,7 @@ defmodule McpClient.Tools do
 
   # Private: Validate and structure response
   defp validate_tools_response(%{"tools" => tools}) when is_list(tools) do
-    tools = Enum.map(tools, &struct!(Tool, &1))
+    tools = Enum.map(tools, &struct!(Tool, ensure_mode(&1)))
     {:ok, tools}
   end
   defp validate_tools_response(_), do: {:error, :invalid_response}
@@ -201,6 +211,7 @@ defmodule McpClient.Tools do
       field :name, String.t(), enforce: true
       field :description, String.t()
       field :inputSchema, map(), enforce: true
+      field :mode, atom(), default: :stateful
     end
   end
 
@@ -212,6 +223,9 @@ defmodule McpClient.Tools do
       field :isError, boolean(), default: false
     end
   end
+
+  defp ensure_mode(%{"mode" => mode} = tool) when mode in ["stateful", "stateless"], do: tool
+  defp ensure_mode(tool), do: Map.put(tool, "mode", "stateful")
 end
 ```
 

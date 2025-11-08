@@ -94,6 +94,22 @@ conn = Process.whereis(MyApp.MCPConnection)
 McpClient.Tools.list(conn)
 ```
 
+> **Note:** Registry-backed names (`{:via, Registry, {MyApp.MCP.Registry, key}}`) are the recommended default. They allow multiple connections per server without singletons and fulfill the registry requirement introduced in ADR-0012.
+
+### Stateless Supervisor Override
+
+**`stateless_supervisor`** - Replace the default `Task.Supervisor` that executes `:stateless` tools.
+
+```elixir
+stateless_supervisor: {MyApp.StatelessSupervisor, strategy: :one_for_one}
+```
+
+Default: `McpClient.StatelessSupervisor` (started alongside each connection).
+
+**When to use:**
+- Route stateless executions through an existing supervision tree
+- Change restart intensity or partition workloads per tenancy
+
 ### Timeout Options
 
 **`request_timeout`** - Maximum time for request/response

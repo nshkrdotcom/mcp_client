@@ -7,7 +7,7 @@
 
 ## Context and Problem Statement
 
-The MCP client consists of two primary processes: Transport (handles stdio/SSE/HTTP communication) and Connection (manages protocol state machine). These processes have a critical dependency: if Transport dies, Connection's state becomes invalid because pending requests cannot complete. The supervision strategy must ensure both processes restart together in the correct order.
+The MCP client now consists of three tightly-related processes: Transport (handles stdio/SSE/HTTP communication), a per-connection `Task.Supervisor` for stateless tool executions, and Connection (manages the protocol state machine). Transport failure invalidates both Connection and any stateless tasks. Likewise, Connection should restart alongside the stateless supervisor so leaked tasks never outlive their parent connection. The supervision strategy must ensure all three restart together in the correct order.
 
 ## Decision Drivers
 
@@ -26,7 +26,7 @@ The MCP client consists of two primary processes: Transport (handles stdio/SSE/H
 
 **Option 2: rest_for_one without links**
 - Supervisor uses `:rest_for_one` strategy
-- Children ordered: Transport (first), Connection (second)
+- Children ordered: Transport (first), StatelessSupervisor (second), Connection (third)
 - No explicit linking required
 
 **Option 3: one_for_all**
@@ -37,11 +37,11 @@ The MCP client consists of two primary processes: Transport (handles stdio/SSE/H
 
 Chosen option: **rest_for_one without explicit links**, because:
 
-1. **Automatic dependency handling**: When Transport (child 1) dies, supervisor automatically restarts children after it (Connection)
-2. **Correct ordering**: Transport starts first, Connection starts second and receives fresh Transport PID
+1. **Automatic dependency handling**: When Transport (child 1) dies, supervisor automatically restarts children after it (StatelessSupervisor + Connection)
+2. **Correct ordering**: Transport starts first, StatelessSupervisor second, Connection third (receives fresh Transport PID and supervisor reference)
 3. **No manual linking**: Supervisor handles all restart logic; Connection doesn't need to trap exits or handle EXIT signals
 4. **Simpler mental model**: Fewer process signals to track; standard OTP pattern
-5. **Failure isolation**: If Connection dies (bug), only Connection restarts; Transport remains stable
+5. **Failure isolation**: If Connection dies (bug), only Connection restarts; Transport + StatelessSupervisor remain stable (stateless tasks get restarted by their supervisor)
 
 ### Implementation Details
 
@@ -71,13 +71,24 @@ defmodule McpClient.ConnectionSupervisor do
         id: :transport
       )
 
+    stateless_name = opts[:stateless_supervisor] || Module.concat(McpClient.StatelessSupervisor, make_ref())
+
+    stateless_child =
+      Supervisor.child_spec(
+        {Task.Supervisor, name: stateless_name},
+        id: :stateless_supervisor
+      )
+
     connection_child =
       Supervisor.child_spec(
-        {McpClient.Connection, Keyword.put(opts, :transport_mod, transport_mod)},
+        {McpClient.Connection,
+         opts
+         |> Keyword.put(:transport_mod, transport_mod)
+         |> Keyword.put(:stateless_supervisor, stateless_name)},
         id: :connection
       )
 
-    children = [transport_child, connection_child]
+    children = [transport_child, stateless_child, connection_child]
 
     Supervisor.init(children, strategy: :rest_for_one)
   end
@@ -86,9 +97,10 @@ end
 
 **Child ordering critical:**
 - Transport must be first child
-- Connection must be second child
-- Order determines restart cascade
-- Connection never spawns its own transport; instead, the supervisor provides the module + options and the Connection receives the running transport PID via its `init/1` arguments/result of `Transport.attach/1`.
+- Stateless supervisor must be second child
+- Connection must be third child
+- Order determines restart cascade (transport failure restarts supervisors + connection; connection failure does not tear down transport)
+- Connection never spawns its own transport or task supervisor; instead, the supervisor provides the module + options and the Connection receives the running transport PID + stateless supervisor via its `init/1` arguments/result of `Transport.attach/1`.
 
 **Failure scenarios:**
 

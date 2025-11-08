@@ -470,7 +470,8 @@ Complete list of MCP methods by category:
             "path": {"type": "string"}
           },
           "required": ["pattern"]
-        }
+        },
+        "mode": "stateless"
       }
     ]
   }
@@ -484,6 +485,7 @@ Complete list of MCP methods by category:
     name: string;           // Unique tool identifier
     description?: string;   // Human-readable description
     inputSchema: object;    // JSON Schema for arguments
+    mode?: "stateful" | "stateless"; // Execution mode (defaults to "stateful")
   }>
 }
 ```

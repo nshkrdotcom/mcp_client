@@ -14,13 +14,14 @@ Tools allow servers to expose executable functions. This module provides:
 - `list/2` - List available tools from server
 - `call/4` - Execute a tool with arguments
 
-All errors are normalized through `McpClient.Error`, and all operations use the core `Connection.call/4` function.
+All errors are normalized through `McpClient.Error`, and all operations use the core `Connection.call/4` function. Tool definitions also declare a `mode` (`:stateful` or `:stateless`) that must be surfaced via the typed struct so the Connection can decide how to execute each call (ADR-0012).
 
 ---
 
 ## Required Reading
 
 **ADR-0011:** Client Features Architecture - Section: "McpClient.Tools"
+**ADR-0012:** Tool Modes and Session Flexibility - Execution mode semantics
 **CLIENT_FEATURES.md:** Section: "McpClient.Tools" - Complete API specification
 **PROTOCOL_DETAILS.md:** Sections: "tools/list" and "tools/call" message schemas
 
@@ -41,7 +42,7 @@ defmodule McpClient.Tools do
   ## Example
 
       {:ok, tools} = McpClient.Tools.list(conn)
-      # => [%Tool{name: "search", description: "Search files", ...}]
+      # => [%Tool{name: "search", description: "Search files", mode: :stateless, ...}]
 
       {:ok, result} = McpClient.Tools.call(conn, "search", %{query: "TODO"})
       # => %CallResult{content: [...], isError: false}
@@ -56,6 +57,7 @@ defmodule McpClient.Tools do
     field :name, String.t(), enforce: true
     field :description, String.t()
     field :inputSchema, map(), enforce: true
+    field :mode, atom(), default: :stateful
   end
 
   typedstruct module: CallResult do
@@ -143,10 +145,16 @@ defmodule McpClient.Tools do
 
   defp validate_tool(%{"name" => name, "inputSchema" => schema} = tool)
       when is_binary(name) and is_map(schema) do
+    mode =
+      tool
+      |> Map.get("mode", "stateful")
+      |> normalize_mode()
+
     {:ok, %Tool{
       name: name,
       description: Map.get(tool, "description"),
-      inputSchema: schema
+      inputSchema: schema,
+      mode: mode
     }}
   end
   defp validate_tool(_), do: {:error, {:invalid_response, :invalid_tool_structure}}
@@ -159,6 +167,12 @@ defmodule McpClient.Tools do
     }}
   end
   defp validate_call_response(_), do: {:error, {:invalid_response, :missing_content_field}}
+
+  defp normalize_mode("stateless"), do: :stateless
+  defp normalize_mode("stateful"), do: :stateful
+  defp normalize_mode(:stateless), do: :stateless
+  defp normalize_mode(:stateful), do: :stateful
+  defp normalize_mode(_), do: :stateful
 end
 ```
 
@@ -203,6 +217,24 @@ defmodule McpClient.ToolsTest do
             %{
               "name" => "search",
               "description" => "Search files",
+              "inputSchema" => %{"type" => "object"},
+              "mode" => "stateless"
+            }
+          ]
+        }}})
+      end)
+
+      assert {:ok, [tool]} = Tools.list(:mock_conn)
+      assert %Tool{name: "search", description: "Search files", mode: :stateless} = tool
+    end
+
+    test "defaults mode to :stateful when missing" do
+      Task.async(fn ->
+        assert_receive {:call, "tools/list", %{}}
+        send(self(), {:response, {:ok, %{
+          "tools" => [
+            %{
+              "name" => "stateful_op",
               "inputSchema" => %{"type" => "object"}
             }
           ]
@@ -210,7 +242,7 @@ defmodule McpClient.ToolsTest do
       end)
 
       assert {:ok, [tool]} = Tools.list(:mock_conn)
-      assert %Tool{name: "search", description: "Search files"} = tool
+      assert tool.mode == :stateful
     end
 
     test "handles empty tool list" do
