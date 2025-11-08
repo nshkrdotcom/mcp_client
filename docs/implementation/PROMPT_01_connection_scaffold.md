@@ -49,6 +49,8 @@ The state machine has 5 states:
 
 `session_mode` defaults to `:optional` and flips to `:required` once a stateful tool appears. `tool_modes` caches the server’s `mode` declarations so later prompts can make dispatch decisions without re-querying.
 
+> **Note:** ADR-0013 documents the future pluggable state-store/registry adapter layer. For this prompt (and the entire MVP), continue to use the in-process maps defined above; the adapter boundary will be added post-MVP without changing the struct.
+
 ### Configuration Defaults (from MVP_SPEC.md)
 
 ```elixir

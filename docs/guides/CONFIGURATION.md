@@ -110,6 +110,8 @@ Default: `McpClient.StatelessSupervisor` (started alongside each connection).
 - Route stateless executions through an existing supervision tree
 - Change restart intensity or partition workloads per tenancy
 
+> **Planned options (post-MVP):** `state_store`, `registry_adapter`, `notification_mode: :async`, and transport-level HTTP overrides will be introduced in follow-up releases per ADR-0013, ADR-0014, and ADR-0015. They are documented here so you can plan migrations, but they are not available in v0.1.x.
+
 ### Timeout Options
 
 **`request_timeout`** - Maximum time for request/response

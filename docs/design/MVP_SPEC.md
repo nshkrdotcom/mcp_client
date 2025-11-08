@@ -30,7 +30,8 @@ See `docs/adr/` for detailed rationale behind each decision.
 - Concrete modules live under `McpClient.Transports.*` (e.g., `.Stdio`, `.Sse`)
 - Supervisor injects `{transport_mod, transport_opts}` and starts the transport child **before** Connection
 - Provides frame-based delivery semantics + active-once flow control
-- See: ADR-0004
+- Users may supply their own transport modules or override Finch/HTTP clients via the same `{module(), opts}` tuple
+- See: ADR-0004 and ADR-0014
 
 **Supervision Tree:**
 ```
@@ -71,6 +72,7 @@ ConnectionSupervisor (rest_for_one)
 ```
 
 `session_mode` starts at `:optional` and flips to `:required` automatically whenever a server advertises at least one stateful tool. `tool_modes` caches the server-supplied metadata from `tools/list` so the Connection can decide how to dispatch each invocation (ADR-0012).
+Request/retry/tombstone metadata lives inside this struct for the MVP; ADR-0013 documents how pluggable state-store and registry adapters will hook into this surface post-MVP without changing the FSM.
 
 **Full transition table:** See `docs/design/STATE_TRANSITIONS.md`
 
@@ -78,6 +80,7 @@ ConnectionSupervisor (rest_for_one)
 
 - Every connection **must** be registered via an atom or `{:via, Registry, {module(), term()}}` tuple so supervisors and transports can locate the correct process in multi-client deployments.
 - Guides document a canonical `MyApp.MCP.ConnectionRegistry` wrapper that supervisors should start alongside the client (`docs/guides/ADVANCED_PATTERNS.md`).
+- ADR-0013 tracks the future work to allow pluggable registry adapters (Horde, Swarm, Redis-backed) without rewriting the connection or supervisor trees.
 - Transports receive the registered connection name during `start_link/1` and never assume singleton processes, satisfying the community request for N:1 server support.
 
 ---
@@ -460,7 +463,7 @@ end
 - No I/O or blocking operations
 - Use `GenServer.cast/2` or `send/2` for async work
 
-**See:** ADR-0006
+**See:** ADR-0006 (current behaviour) and ADR-0015 (planned optional async mode)
 
 ### 7.3 Progress & Cancellation
 
@@ -773,12 +776,12 @@ All request/response examples in this doc use **string keys** (matching JSON) ev
 
 **Critical deferrals:**
 - ❌ Session ID gating (post-MVP correctness hardening)
-- ❌ Async notification dispatch (TaskSupervisor)
+- ❌ Async notification dispatch (TaskSupervisor, see ADR-0015)
 - ❌ Offload JSON decode pool
 - ❌ Connection pooling
-- ❌ ETS-based request tracking
+- ❌ ETS-based request tracking (see ADR-0013)
 - ❌ WebSocket transport
-- ❌ Compression
+- ❌ Compression / custom HTTP client features (see ADR-0014)
 - ❌ Streaming/chunking
 - ❌ Request replay after reconnect
 

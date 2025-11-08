@@ -151,6 +151,7 @@ This design ensures:
 - When **any** tool is `:stateful`, the connection flips into **session-required** mode: every request (including stateless ones) carries the current `session_id`, and stateful calls execute inside the Connection process to access shared transport state.
 - Switching modes happens automatically whenever the server updates its tool list; no application code changes are required.
 - Stateless executions use the dedicated `Task.Supervisor` started alongside the connection (override via `:stateless_supervisor` option) so CPU-heavy work never blocks the Connection mailbox.
+- Feature modules never expose `session_id` or `session_mode`; those remain internal concerns per ADR-0012 so application code can treat tool calls uniformly regardless of server requirements.
 
 ---
 

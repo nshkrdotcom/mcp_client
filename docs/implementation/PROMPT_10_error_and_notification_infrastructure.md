@@ -17,6 +17,8 @@ Before implementing high-level MCP feature APIs (Tools, Resources, etc.), we nee
 
 These modules provide the foundation for consistent error handling and notification dispatch across all feature modules.
 
+> **Reminder (ADR-0015):** Notification routing remains synchronous in the MVP. Build the router so future work can optionally fan out via a `Task.Supervisor`, but do not introduce async processing yet.
+
 ---
 
 ## Required Reading

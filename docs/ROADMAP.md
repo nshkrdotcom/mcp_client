@@ -3,7 +3,7 @@
 Post-MVP features and enhancement timeline for the Elixir MCP Client library.
 
 **Current Version:** 0.1.x (MVP)
-**Last Updated:** 2025-11-07
+**Last Updated:** 2025-11-10
 
 ---
 
@@ -98,7 +98,7 @@ Load tools on-demand instead of all upfront:
 
 **Priority:** ⭐⭐⭐⭐
 **Impact:** Prevents slow handlers from blocking connection
-**Status:** Deferred in [ADR-0006](adr/0006-synchronous-notification-handlers.md)
+**Status:** Captured in [ADR-0015](adr/0015-async-notification-dispatch-roadmap.md) (deferred implementation)
 **ETA:** v0.3.0 (Q2 2026)
 
 Dispatch notifications to TaskSupervisor instead of blocking:
@@ -158,6 +158,28 @@ end
 ```
 
 **Why Tier 1:** Profiling shows decode blocking for large resource reads (multi-MB documents).
+
+### 6. Pluggable State Store & Registry Adapters
+
+**Priority:** ⭐⭐⭐  
+**Impact:** Unlocks ETS/Redis/Horde-backed coordination, improves observability  
+**Status:** Defined in [ADR-0013](adr/0013-pluggable-state-store-and-registry-adapters.md)  
+**ETA:** v0.3.0 (Q2 2026)
+
+Ship `McpClient.StateStore` and `McpClient.RegistryAdapter` behaviours with default in-memory + `Registry` implementations, allowing applications to opt into ETS tables, Redis-backed registries, or Horde without forking the FSM.
+
+**Why Tier 1:** Requested repeatedly by community maintainers (Valim thread) to support multi-node deployments and richer debugging.
+
+### 7. Transport Customization Hooks
+
+**Priority:** ⭐⭐⭐  
+**Impact:** Lets teams reuse hardened Finch pools / HTTP stacks, encourages third-party transports  
+**Status:** Defined in [ADR-0014](adr/0014-transport-customization-and-http-client-overrides.md)  
+**ETA:** v0.3.0 (Q2 2026)
+
+Expose configuration for Finch pool overrides (`:finch`, `:http_client`) and document the `McpClient.Transport` plug-in workflow so custom transports (WebSocket, proprietary SSE) can be published independently.
+
+**Why Tier 1:** Reduces pressure to fork the repo just to change HTTP client details; unblocks enterprise networking requirements.
 
 ---
 

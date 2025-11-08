@@ -19,6 +19,8 @@ The transport is responsible for:
 - Flow control via `set_active/2`
 - Clean shutdown
 
+> **Reminder (ADR-0014):** The `transport: {module(), opts}` option is the public plug-in point. Keep the behaviour generic (no Finch/Req assumptions) so users can drop in their own transports or override HTTP client pools without touching the connection.
+
 ---
 
 ## Required Reading: Transport Contract

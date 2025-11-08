@@ -13,6 +13,7 @@ All transports share:
 - **16MB frame size limit** - Oversized frames rejected
 - **JSON-RPC 2.0 framing** - Newline-delimited JSON messages
 - **Bidirectional communication** - Client can send, server can send
+- **Plug-in friendly design** - Any module implementing `McpClient.Transport` can be injected via the `transport: {module(), opts}` option (see ADR-0014)
 
 ---
 
